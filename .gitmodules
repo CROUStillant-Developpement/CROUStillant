@@ -1,0 +1,3 @@
+[submodule "assets"]
+	path = CrousPy
+	url = https://github.com/CROUStillant-Developpement/CrousPy
