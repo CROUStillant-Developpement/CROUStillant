@@ -15,6 +15,9 @@ load_dotenv(dotenv_path='/CROUStillant/.env')
 
 
 async def main():
+    """
+    Main function
+    """
     session = ClientSession()
 
     logger = Logger()
@@ -85,6 +88,9 @@ async def main():
 
 
 async def sendWebhook(webhook: Webhook, embed: Embed) -> None:
+    """
+    Fonction pour envoyer un message sur un webhook Discord
+    """
     await webhook.send(embed=embed)
 
 
