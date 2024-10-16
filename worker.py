@@ -12,6 +12,12 @@ class Worker:
 
 
     async def loadRegions(self) -> list[Region]:
+        """
+        Charge les régions et les enregistre dans la base de données.
+        
+        :return: Les régions
+        :rtype: list[Region]
+        """
         self.logger.info("Chargement des régions...")
 
         regions = await self.client.region.get()
@@ -37,6 +43,12 @@ class Worker:
 
 
     async def loadRestaurants(self, regions: list[Region]) -> None:
+        """
+        Charge les restaurants et les enregistre dans la base de données.
+        
+        :param regions: Les régions
+        :type regions: list[Region]
+        """
         self.logger.info("Chargement des restaurants...")
 
         async with self.pool.acquire() as connection:
@@ -109,6 +121,14 @@ class Worker:
 
 
     async def loadMenus(self, region: Region, ru: RU) -> None:
+        """
+        Charge les menus et les enregistre dans la base de données.
+        
+        :param region: La région
+        :type region: Region
+        :param ru: Le restaurant universitaire
+        :type ru: RU
+        """
         self.logger.info(f"Chargement des menus pour le restaurant {ru.title}...")
 
         menus = await self.client.menu.get(region.id, ru.id)
