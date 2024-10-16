@@ -1,0 +1,1 @@
+0 1,9,11 * * * /usr/local/bin/python /CROUStillant/__main__.py >> /CROUStillant/crontab.log

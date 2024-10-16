@@ -1,0 +1,71 @@
+version: '3.8'
+
+services:
+  db:
+    container_name: db
+    image: postgres:latest
+    environment:
+      POSTGRES_DB: ${POSTGRES_DATABASE}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      PGDATA: /var/lib/postgresql/data
+    volumes:
+      - ../db_data:/var/lib/postgresql/data
+      - ./schema.sql:/docker-entrypoint-initdb.d/schema.sql
+      - ./postgresql.conf:/etc/postgresql/postgresql.conf
+    networks:
+      - CROUStillantNetwork
+    ports:
+      - "5432:5432"
+    command: ["postgres", "-c", "config_file=/etc/postgresql/postgresql.conf"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  api:
+    container_name: api
+    image: postgrest/postgrest
+    ports:
+      - "3000:3000"
+    environment:
+      PGRST_DB_URI: postgres://${PGRST_USER}:${PGRST_PASSWORD}@db:5432/${POSTGRES_DATABASE}
+      PGRST_OPENAPI_SERVER_PROXY_URI: http://127.0.0.1:3000
+      PGRST_DB_ANON_ROLE: ${PGRST_USER}
+      PGRST_DB_MAX_ROWS: 100
+      PGRST_DB_SCHEMA: ${PGRST_DB_SCHEMA}
+    depends_on:
+      - db
+    networks:
+      - CROUStillantNetwork
+
+  redocly:
+    container_name: openapi
+    image: redocly/redoc
+    ports:
+      - "8080:80"
+    environment:
+      SPEC_URL: http://localhost:3000/
+    depends_on:
+      - api
+    networks:
+      - CROUStillantNetwork
+
+  script:
+    container_name: script
+    build:
+      context: .
+      dockerfile: Dockerfile
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - CROUStillantNetwork
+
+networks:
+  CROUStillantNetwork:
+    external: true
+
+volumes:
+  db_data:
