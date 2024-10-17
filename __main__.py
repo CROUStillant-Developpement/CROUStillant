@@ -1,8 +1,8 @@
 import asyncio
 
 from CrousPy import Crous
-from logger import Logger
-from worker import Worker
+from CROUStillant.logger import Logger
+from CROUStillant.worker import Worker
 from asyncpg import create_pool
 from aiohttp import ClientSession
 from os import environ
@@ -18,12 +18,14 @@ async def main():
     """
     Main function
     """
+
+    # Création de la session et du logger
     session = ClientSession()
-
     logger = Logger()
-
     crous = Crous(session)
 
+
+    # Connexion à la base de données
     logger.info("Connexion à la base de données...")
 
     pool = await create_pool(
@@ -39,10 +41,21 @@ async def main():
 
     logger.info("Connexion à la base de données établie !")
 
+
+    # Création du worker
+    worker = Worker(
+        logger=logger,
+        pool=pool,
+        client=crous,
+    )
+
+
+    # Lancement de la tâche de fond
     webhook = Webhook.from_url(environ["WEBHOOK_URL"], session=session)
     year = datetime.now().year
-    
+    stats = await worker.getStats()
     start = datetime.now()
+
 
     # Startup message
     embed = Embed(
@@ -51,39 +64,66 @@ async def main():
         color=int(environ['EMBED_COLOR'], base=16),
         timestamp=datetime.now()
     )
+    embed.add_field(
+        name="Statistiques", 
+        value=f"""
+Nombre de régions : `{stats['regions']:,d}`
+Nombre de restaurants : `{stats['restaurants']:,d}`
+Nombre de types de restauration : `{stats['types_restaurants']:,d}`
+Nombre de menus : `{stats['menus']:,d}`
+Nombre de repas : `{stats['repas']:,d}`
+Nombre de catégories : `{stats['categories']:,d}`
+Nombre de plats : `{stats['plats']:,d}`
+Nombre de compositions : `{stats['compositions']:,d}`
+    """)
     embed.set_thumbnail(url=environ["THUMBNAIL_URL"])
     embed.set_image(url=environ["IMAGE_URL"])
-    embed.set_footer(text="CROUStillant Développement © 2022 - {year} | Tous droits réservés.")
+    embed.set_footer(text=f"CROUStillant Développement © 2022 - {year} | Tous droits réservés.")
 
     await sendWebhook(webhook=webhook, embed=embed)
 
-    worker = Worker(
-        logger=logger,
-        pool=pool,
-        client=crous,
-    )
 
+    # Chargement des données
     logger.info("Chargement des données...")
 
     regions = await worker.loadRegions()
     await worker.loadRestaurants(regions=regions)
-    
-    end = datetime.now()
-    elapsed = end - start
+
+    logger.info("Données chargées !")
+
 
     # Shutdown message
+    end = datetime.now()
+    elapsed = end - start
+    stats = await worker.getStats()
+
     embed = Embed(
         title="CROUStillant",
         description=f"Tâche de fond terminée ! Données chargées.\nTemps écoulé : `{round(elapsed.total_seconds(), 2)}` secondes.",
         color=int(environ['EMBED_COLOR'], base=16),
         timestamp=datetime.now()
     )
+    embed.add_field(
+        name="Statistiques", 
+        value=f"""
+Nombre de régions : `{stats['regions']:,d}`
+Nombre de restaurants : `{stats['restaurants']:,d}`
+Nombre de types de restauration : `{stats['types_restaurants']:,d}`
+Nombre de menus : `{stats['menus']:,d}`
+Nombre de repas : `{stats['repas']:,d}`
+Nombre de catégories : `{stats['categories']:,d}`
+Nombre de plats : `{stats['plats']:,d}`
+Nombre de compositions : `{stats['compositions']:,d}`
+    """)
     embed.set_thumbnail(url=environ["THUMBNAIL_URL"])
     embed.set_image(url=environ["IMAGE_URL"])
-    embed.set_footer(text="CROUStillant Développement © 2022 - {year} | Tous droits réservés.")
+    embed.set_footer(text=f"CROUStillant Développement © 2022 - {year} | Tous droits réservés.")
     
     await sendWebhook(webhook=webhook, embed=embed)
 
+
+    # Fermeture de la session et de la connexion à la base de données
+    await pool.close()
     await session.close()
 
 

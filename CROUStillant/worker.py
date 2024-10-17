@@ -1,14 +1,51 @@
 from CrousPy import Crous, Region, RU
-from logger import Logger
+from CROUStillant.logger import Logger
 from asyncpg import Pool, Connection
 from json import dumps
 
 
 class Worker:
     def __init__(self, logger: Logger, pool: Pool, client: Crous) -> None:
+        """
+        Constructeur de la classe Worker.
+        
+        :param logger: Le logger
+        :type logger: Logger
+        :param pool: Le pool de connexions
+        :type pool: Pool
+        :param client: Le client Crous
+        :type client: Crous
+        """
         self.logger = logger
         self.pool = pool
         self.client = client
+
+
+    async def getStats(self) -> dict:
+        """
+        Récupère les statistiques.
+
+        :return: Les statistiques
+        :rtype: dict
+        """
+        async with self.pool.acquire() as connection:
+            connection: Connection
+
+            stats = await connection.fetchrow(
+                """
+                    SELECT
+                        (SELECT COUNT(*) FROM REGION) AS regions,
+                        (SELECT COUNT(*) FROM RESTAURANT) AS restaurants,
+                        (SELECT COUNT(*) FROM TYPE_RESTAURANT) AS types_restaurants,
+                        (SELECT COUNT(*) FROM MENU) AS menus,
+                        (SELECT COUNT(*) FROM REPAS) AS repas,
+                        (SELECT COUNT(*) FROM CATEGORIE) AS categories,
+                        (SELECT COUNT(*) FROM PLAT) AS plats,
+                        (SELECT COUNT(*) FROM COMPOSITION) AS compositions
+                """
+            )
+
+        return dict(stats)
 
 
     async def loadRegions(self) -> list[Region]:
