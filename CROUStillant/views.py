@@ -29,17 +29,19 @@ class Views:
             await connection.execute("""
                 CREATE SCHEMA IF NOT EXISTS {SCHEMA};
 
-                COMMENT ON SCHEMA {SCHEMA} IS
-                $$CROUStillant - PostgREST API
-                
-                ![banner](https://raw.githubusercontent.com/CROUStillant-Developpement/CROUStillantAssets/main/images/banner.png)
-
-                CROUStillant est un projet qui a pour but de fournir les menus des restaurants universitaires en France et en Outre-Mer.  
-                Cette API contient les données brutes sauvegardées dans la base de données de CROUStillant.  
-                Pour l'API publique, veuillez vous référer à : https://api.croustillant.bayfield.dev/$$;
-
                 CREATE TABLE IF NOT EXISTS PUBLIC.EMPTY ();
             """.format(
+                SCHEMA=environ["PGRST_DB_SCHEMA"],
+            ))
+
+            await connection.execute("""COMMENT ON SCHEMA {SCHEMA} IS
+$$CROUStillant - PostgREST API
+
+![banner](https://raw.githubusercontent.com/CROUStillant-Developpement/CROUStillantAssets/main/images/banner.png)
+
+CROUStillant est un projet qui a pour but de fournir les menus des restaurants universitaires en France et en Outre-Mer.  
+Cette API contient les données brutes sauvegardées dans la base de données de CROUStillant.  
+Pour l'API publique, veuillez vous référer à : https://api.croustillant.bayfield.dev/$$;""".format(
                 SCHEMA=environ["PGRST_DB_SCHEMA"],
             ))
 
