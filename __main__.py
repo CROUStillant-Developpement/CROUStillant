@@ -3,6 +3,7 @@ import asyncio
 from CrousPy import Crous
 from CROUStillant.logger import Logger
 from CROUStillant.worker import Worker
+from CROUStillant.views import Views
 from asyncpg import create_pool
 from aiohttp import ClientSession
 from os import environ
@@ -48,6 +49,14 @@ async def main():
         pool=pool,
         client=crous,
     )
+
+
+    # Création des vues
+    views = Views(
+        logger=logger,
+        pool=pool
+    )
+    await views.run()
 
 
     # Lancement de la tâche de fond
