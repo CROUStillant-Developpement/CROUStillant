@@ -13,8 +13,6 @@ services:
       - ../db_data:/var/lib/postgresql/data
       - ./schema.sql:/docker-entrypoint-initdb.d/schema.sql
       - ./postgresql.conf:/etc/postgresql/postgresql.conf
-    networks:
-      - CROUStillantNetwork
     ports:
       - "5432:5432"
     command: ["postgres", "-c", "config_file=/etc/postgresql/postgresql.conf"]
@@ -23,6 +21,9 @@ services:
       interval: 10s
       timeout: 5s
       retries: 10
+    restart: unless-stopped
+    networks:
+      - CROUStillantNetwork
 
   api:
     container_name: api
@@ -36,7 +37,11 @@ services:
       PGRST_DB_MAX_ROWS: 100
       PGRST_DB_SCHEMA: ${PGRST_DB_SCHEMA}
     depends_on:
-      - db
+      db:
+        condition: service_healthy
+      script:
+        condition: service_started
+    restart: unless-stopped
     networks:
       - CROUStillantNetwork
 
@@ -48,7 +53,9 @@ services:
     environment:
       SPEC_URL: http://localhost:3000/
     depends_on:
-      - api
+      api:
+        condition: service_started
+    restart: unless-stopped
     networks:
       - CROUStillantNetwork
 
@@ -60,6 +67,7 @@ services:
     depends_on:
       db:
         condition: service_healthy
+    restart: unless-stopped
     networks:
       - CROUStillantNetwork
 
