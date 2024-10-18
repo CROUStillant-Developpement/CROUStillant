@@ -20,6 +20,9 @@ class Worker:
         self.pool = pool
         self.client = client
 
+        self.taskId = None
+        self.requests = 0
+
 
     async def getStats(self) -> dict:
         """
@@ -57,7 +60,9 @@ class Worker:
         """
         self.logger.info("Chargement des régions...")
 
+        self.logger.debug("GET /regions")
         regions = await self.client.region.get()
+        self.requests += 1
 
         self.logger.info(f"{len(regions)} régions chargées !")
 
@@ -94,12 +99,24 @@ class Worker:
             for region in regions:
                 self.logger.info(f"Chargement des restaurants pour la région {region.name}...")
 
+                self.logger.debug(f"GET /regions/{region.id}/restaurants")
                 restaurants = await self.client.ru.get(region.id)
+                self.requests += 1
 
                 self.logger.info(f"{len(restaurants)} restaurants chargés pour la région {region.name} !")
 
                 for restaurant in restaurants:
                     restaurant: RU
+                    
+                    if self.taskId:
+                        await connection.execute(
+                            """
+                                INSERT INTO TACHE_LOG (RID, IDTACHE)
+                                VALUES ($1, $2)
+                            """, 
+                            restaurant.id, 
+                            self.taskId
+                        )
 
                     tpRestaurantID = await connection.fetchval("SELECT IDTPR FROM TYPE_RESTAURANT WHERE LIBELLE = $1", restaurant.type)
 
@@ -168,7 +185,9 @@ class Worker:
         """
         self.logger.info(f"Chargement des menus pour le restaurant {ru.title}...")
 
+        self.logger.debug(f"GET /regions/{region.id}/restaurants/{ru.id}/menus")
         menus = await self.client.menu.get(region.id, ru.id)
+        self.requests += 1
 
         self.logger.info(f"{len(menus)} menus chargés pour le restaurant {ru.title} !")
 

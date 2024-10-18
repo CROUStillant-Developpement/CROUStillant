@@ -4,7 +4,7 @@ from CrousPy import Crous
 from CROUStillant.logger import Logger
 from CROUStillant.worker import Worker
 from CROUStillant.views import Views
-from asyncpg import create_pool
+from asyncpg import create_pool, Connection
 from aiohttp import ClientSession
 from os import environ
 from dotenv import load_dotenv
@@ -58,12 +58,31 @@ async def main():
     )
     await views.run()
 
-
     # Lancement de la tâche de fond
     webhook = Webhook.from_url(environ["WEBHOOK_URL"], session=session)
     year = datetime.now().year
     stats = await worker.getStats()
     start = datetime.now()
+    
+    
+    # Création d'une tâche de fond pour mettre à jour les données
+    async with pool.acquire() as connection:
+        connection: Connection
+
+        await connection.execute(
+            """
+                INSERT INTO TACHE (
+                    DEBUT, DEBUT_REGIONS, DEBUT_RESTAURANTS, DEBUT_TYPES_RESTAURANTS, DEBUT_MENUS, DEBUT_REPAS, 
+                    DEBUT_CATEGORIES, DEBUT_PLATS, DEBUT_COMPOSITIONS
+                )
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9);
+            """, 
+            start, stats['regions'], stats['restaurants'], stats['types_restaurants'], stats['menus'], 
+            stats['repas'], stats['categories'], stats['plats'], stats['compositions']
+        )
+
+        taskId = await connection.fetchval("SELECT MAX(ID) FROM TACHE;")
+        worker.taskId = taskId
 
 
     # Startup message
@@ -123,12 +142,30 @@ Nombre de repas : `{stats['repas']:,d}`
 Nombre de catégories : `{stats['categories']:,d}`
 Nombre de plats : `{stats['plats']:,d}`
 Nombre de compositions : `{stats['compositions']:,d}`
+
+Nombre de requêtes : `{worker.requests:,d}` (`{round(worker.requests / elapsed.total_seconds(), 2)}` par seconde)
     """)
     embed.set_thumbnail(url=environ["THUMBNAIL_URL"])
     embed.set_image(url=environ["IMAGE_URL"])
     embed.set_footer(text=f"CROUStillant Développement © 2022 - {year} | Tous droits réservés.")
     
     await sendWebhook(webhook=webhook, embed=embed)
+
+
+    # Mise à jour des données
+    async with pool.acquire() as connection:
+        connection: Connection
+
+        await connection.execute(
+            """
+                UPDATE TACHE
+                SET FIN = $1, FIN_REGIONS = $2, FIN_RESTAURANTS = $3, FIN_TYPES_RESTAURANTS = $4, FIN_MENUS = $5, 
+                    FIN_REPAS = $6, FIN_CATEGORIES = $7, FIN_PLATS = $8, FIN_COMPOSITIONS = $9, REQUETES = $10
+                WHERE ID = $11;
+            """,
+            end, stats['regions'], stats['restaurants'], stats['types_restaurants'], stats['menus'], stats['repas'],
+            stats['categories'], stats['plats'], stats['compositions'], worker.requests, worker.taskId
+        )
 
 
     # Fermeture de la session et de la connexion à la base de données
