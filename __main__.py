@@ -22,7 +22,7 @@ async def main():
 
     # Création de la session et du logger
     session = ClientSession()
-    logger = Logger()
+    logger = Logger("background")
     crous = Crous(session)
 
 
@@ -103,7 +103,15 @@ Nombre de repas : `{stats['repas']:,d}`
 Nombre de catégories : `{stats['categories']:,d}`
 Nombre de plats : `{stats['plats']:,d}`
 Nombre de compositions : `{stats['compositions']:,d}`
-    """)
+        """
+    )
+    embed.add_field(
+        name="Debug",
+        value=f"""
+Tâche **`#{taskId}`**
+        """,
+        inline=False
+    )
     embed.set_thumbnail(url=environ["THUMBNAIL_URL"])
     embed.set_image(url=environ["IMAGE_URL"])
     embed.set_footer(text=f"CROUStillant Développement © 2022 - {year} | Tous droits réservés.")
@@ -142,13 +150,20 @@ Nombre de repas : `{stats['repas']:,d}`
 Nombre de catégories : `{stats['categories']:,d}`
 Nombre de plats : `{stats['plats']:,d}`
 Nombre de compositions : `{stats['compositions']:,d}`
-
+        """
+    )
+    embed.add_field(
+        name="Debug",
+        value=f"""
+Tâche **`#{taskId}`**
 Nombre de requêtes : `{worker.requests:,d}` (`{round(worker.requests / elapsed.total_seconds(), 2)}` par seconde)
-    """)
+        """,
+        inline=False
+    )
     embed.set_thumbnail(url=environ["THUMBNAIL_URL"])
     embed.set_image(url=environ["IMAGE_URL"])
     embed.set_footer(text=f"CROUStillant Développement © 2022 - {year} | Tous droits réservés.")
-    
+
     await sendWebhook(webhook=webhook, embed=embed)
 
 

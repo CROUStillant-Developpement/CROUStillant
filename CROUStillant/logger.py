@@ -7,15 +7,21 @@ class Logger:
     """
     La classe Logger permet de gérer les logs de l'application.
     """
-    def __init__(self):
+    def __init__(self, file: str) -> None:
         """
         Initialisation du logger
         """
-        self.logger = logging.getLogger('CROUStillant')
+        self.file = file
+        
+        path = os.path.join(f"{os.getcwd()}", 'logs')
+        if not os.path.exists(path):
+            os.makedirs(path)
+
+        self.logger = logging.getLogger(f"CROUStillant - {self.file}")
         self.logger.setLevel(logging.DEBUG)
 
         handler = logging.handlers.RotatingFileHandler(
-            filename=f"./logs.log",
+            filename=f"{path}/{self.file}.log",
             encoding='utf-8',
             maxBytes=32 * 1024 * 1024,
             backupCount=5,
