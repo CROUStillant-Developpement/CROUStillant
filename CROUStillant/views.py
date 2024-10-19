@@ -26,13 +26,15 @@ class Views:
         Création du schéma de la base de données pour l'API
         """
         async with self.pool.acquire() as connection:
-            await connection.execute("""
-                CREATE SCHEMA IF NOT EXISTS {SCHEMA};
+            await connection.execute(
+                """
+                    CREATE SCHEMA IF NOT EXISTS {SCHEMA};
 
-                CREATE TABLE IF NOT EXISTS PUBLIC.EMPTY ();
-            """.format(
-                SCHEMA=environ["PGRST_DB_SCHEMA"],
-            ))
+                    CREATE TABLE IF NOT EXISTS PUBLIC.EMPTY ();
+                """.format(
+                    SCHEMA=environ["PGRST_DB_SCHEMA"],
+                )
+            )
 
             await connection.execute("""COMMENT ON SCHEMA {SCHEMA} IS
 $$CROUStillant - PostgREST API
@@ -45,24 +47,28 @@ Pour l'API publique, veuillez vous référer à : https://api.croustillant.bayfi
                 SCHEMA=environ["PGRST_DB_SCHEMA"],
             ))
 
-            user = await connection.fetchval("""
-                SELECT 1
-                FROM pg_roles
-                WHERE rolname = '{USER}';
-            """.format(
-                USER=environ["PGRST_USER"]
-            ))
+            user = await connection.fetchval(
+                """
+                    SELECT 1
+                    FROM pg_roles
+                    WHERE rolname = '{USER}';
+                """.format(
+                    USER=environ["PGRST_USER"]
+                )
+            )
 
             if not user:
-                await connection.execute("""
-                    CREATE USER {USER} WITH ENCRYPTED PASSWORD '{PASSWORD}';
-                    GRANT CONNECT ON DATABASE "CROUStillant" TO {USER};
-                    GRANT USAGE ON SCHEMA {SCHEMA} TO {USER};
-                """.format(
-                    USER=environ["PGRST_USER"],
-                    PASSWORD=environ["PGRST_PASSWORD"],
-                    SCHEMA=environ["PGRST_DB_SCHEMA"],
-                ))
+                await connection.execute(
+                    """
+                        CREATE USER {USER} WITH ENCRYPTED PASSWORD '{PASSWORD}';
+                        GRANT CONNECT ON DATABASE "CROUStillant" TO {USER};
+                        GRANT USAGE ON SCHEMA {SCHEMA} TO {USER};
+                    """.format(
+                        USER=environ["PGRST_USER"],
+                        PASSWORD=environ["PGRST_PASSWORD"],
+                        SCHEMA=environ["PGRST_DB_SCHEMA"],
+                    )
+                )
 
 
     async def createViews(self):

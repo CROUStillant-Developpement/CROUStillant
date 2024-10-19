@@ -107,16 +107,6 @@ class Worker:
 
                 for restaurant in restaurants:
                     restaurant: RU
-                    
-                    if self.taskId:
-                        await connection.execute(
-                            """
-                                INSERT INTO TACHE_LOG (RID, IDTACHE)
-                                VALUES ($1, $2)
-                            """, 
-                            restaurant.id, 
-                            self.taskId
-                        )
 
                     tpRestaurantID = await connection.fetchval("SELECT IDTPR FROM TYPE_RESTAURANT WHERE LIBELLE = $1", restaurant.type)
 
@@ -135,8 +125,8 @@ class Worker:
                     async with connection.transaction():
                         await connection.execute(
                             """
-                                INSERT INTO restaurant (RID, IDREG, IDTPR, NOM, ADRESSE, LATITUDE, LONGITUDE, HORAIRES, JOURS_OUVERT, IMAGE_URL, EMAIL, TELEPHONE, ISPMR, ZONE, PAIEMENT, ACCES) 
-                                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16) 
+                                INSERT INTO restaurant (RID, IDREG, IDTPR, NOM, ADRESSE, LATITUDE, LONGITUDE, HORAIRES, JOURS_OUVERT, IMAGE_URL, EMAIL, TELEPHONE, ISPMR, ZONE, PAIEMENT, ACCES, OPENED) 
+                                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
                                 ON CONFLICT (RID) DO UPDATE SET
                                     IDTPR = $3,
                                     NOM = $4,
@@ -151,7 +141,8 @@ class Worker:
                                     ISPMR = $13,
                                     ZONE = $14,
                                     PAIEMENT = $15,
-                                    ACCES = $16
+                                    ACCES = $16,
+                                    OPENED = $17
                             """, 
                             restaurant.id, 
                             region.id, 
@@ -168,10 +159,24 @@ class Worker:
                             restaurant.infos.pmr,
                             restaurant.zone, 
                             dumps(restaurant.infos.paiements) if restaurant.infos.paiements else None,
-                            dumps(restaurant.infos.acces) if restaurant.infos.acces else None
+                            dumps(restaurant.infos.acces) if restaurant.infos.acces else None,
+                            restaurant.open
                         )
 
-                    await self.loadMenus(region, restaurant)
+                    if self.taskId:
+                        await connection.execute(
+                            """
+                                INSERT INTO TACHE_LOG (RID, IDTACHE)
+                                VALUES ($1, $2)
+                            """, 
+                            restaurant.id, 
+                            self.taskId
+                        )
+
+                    if restaurant.open:
+                        await self.loadMenus(region, restaurant)
+                    else:
+                        self.logger.debug(f"Le restaurant {restaurant.title} est fermé ! Aucun menu ne sera chargé.")
 
 
     async def loadMenus(self, region: Region, ru: RU) -> None:
