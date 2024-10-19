@@ -25,8 +25,8 @@ services:
     networks:
       - CROUStillantNetwork
 
-  api:
-    container_name: api
+  raw:
+    container_name: raw
     image: postgrest/postgrest
     ports:
       - "3000:3000"
@@ -53,7 +53,7 @@ services:
     environment:
       SPEC_URL: http://localhost:3000/
     depends_on:
-      api:
+      raw:
         condition: service_started
     restart: unless-stopped
     networks:
