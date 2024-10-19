@@ -15,6 +15,7 @@ CREATE OR REPLACE VIEW {SCHEMA}.RESTAURANTS AS (
         PAIEMENT,
         ACCES
     FROM PUBLIC.RESTAURANT
+    LEFT JOIN PUBLIC.EMPTY ON 1 = 1
 );
 
 -- ***************************************************************/

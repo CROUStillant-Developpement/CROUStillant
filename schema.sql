@@ -2,7 +2,7 @@
     *  CROUStillant - schema.sql
     *  Created by: CROUStillant Développement
     *  Created on: 13/11/2023
-    *  Updated on: 16/10/2024
+    *  Updated on: 18/10/2024
     *  Description: SQL database scheme for the CROUStillant project
 ***************************************************************/
 
