@@ -63,7 +63,7 @@ async def main():
     webhook = Webhook.from_url(environ["WEBHOOK_URL"], session=session)
     year = datetime.now(timezone("Europe/Paris")).year
     stats = await worker.getStats()
-    start = datetime.now(timezone("Europe/Paris"))
+    start = datetime.now()
     
     
     # Création d'une tâche de fond pour mettre à jour les données
@@ -130,7 +130,7 @@ Tâche **`#{taskId}`**
 
 
     # Shutdown message
-    end = datetime.now(timezone("Europe/Paris"))
+    end = datetime.now()
     elapsed = end - start
     stats = await worker.getStats()
 
