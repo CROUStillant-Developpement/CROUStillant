@@ -10,6 +10,7 @@ from os import environ
 from dotenv import load_dotenv
 from discord import Embed, Webhook
 from datetime import datetime
+from pytz import timezone
 
 
 load_dotenv(dotenv_path='/CROUStillant/.env')
@@ -60,9 +61,9 @@ async def main():
 
     # Lancement de la tâche de fond
     webhook = Webhook.from_url(environ["WEBHOOK_URL"], session=session)
-    year = datetime.now().year
+    year = datetime.now(timezone("Europe/Paris")).year
     stats = await worker.getStats()
-    start = datetime.now()
+    start = datetime.now(timezone("Europe/Paris"))
     
     
     # Création d'une tâche de fond pour mettre à jour les données
@@ -129,7 +130,7 @@ Tâche **`#{taskId}`**
 
 
     # Shutdown message
-    end = datetime.now()
+    end = datetime.now(timezone("Europe/Paris"))
     elapsed = end - start
     stats = await worker.getStats()
 
