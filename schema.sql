@@ -234,3 +234,22 @@ CREATE TABLE BUCKET(
     AJOUT TIMESTAMP,
     CONSTRAINT CK_BUCKET_SECS CHECK (B_SECS > 0)
 );
+
+
+-- Listener
+CREATE OR REPLACE FUNCTION notifyOnInsert()
+RETURNS TRIGGER AS $$
+DECLARE
+    payload TEXT;
+BEGIN
+    payload := row_to_json(NEW)::text;
+    PERFORM pg_notify('insert', payload);
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+
+CREATE OR REPLACE TRIGGER notifyOnInsert
+AFTER INSERT ON RESTAURANT
+FOR EACH ROW
+EXECUTE FUNCTION notifyOnInsert();
