@@ -53,9 +53,39 @@ CREATE TABLE PARAMETRES(
     MESSAGE_ID BIGINT,
     RID INT,
     THEME VARCHAR(100),
+    UPDATED TIMESTAMP,
     CONSTRAINT PK_PARAMETRES PRIMARY KEY (GUILD_ID, RID),
     CONSTRAINT FK_PARAMETRES_RESTAURANT FOREIGN KEY (RID) REFERENCES RESTAURANT(RID),
     CONSTRAINT CK_PARAMETRES_THEME CHECK (THEME IN ('light', 'dark'))
+);
+
+
+-- Type de log
+CREATE TABLE TYPE_LOG(
+    IDTPL INT PRIMARY KEY,
+    LIBELLE VARCHAR(255)
+);
+
+-- Ajout des types de log
+INSERT INTO TYPE_LOG (IDTPL, LIBELLE) VALUES  (
+    (1, 'Menu ajouté'),
+    (2, 'Menu mis à jour'),
+    (3, 'Erreur lors de la mise à jour du menu'),
+    (4, 'Impossible de modifier le menu'),
+    (5, 'Paramètres modifiés'),
+    (6, 'Paramètres supprimés'),
+    (7, 'Suppression automatique des paramètres')
+);
+
+
+-- Logs des serveurs Discord
+CREATE TABLE LOGS(
+    GUILD_ID BIGINT,
+    IDTPL INT,
+    LOG_DATE TIMESTAMP,
+    MESSAGE VARCHAR(1000),
+    CONSTRAINT FK_LOGS_TYPE_LOG FOREIGN KEY (IDTPL) REFERENCES TYPE_LOG(IDTPL),
+    CONSTRAINT PK_LOGS PRIMARY KEY (GUILD_ID, IDTPL, LOG_DATE)
 );
 
 
