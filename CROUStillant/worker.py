@@ -6,7 +6,7 @@ from datetime import datetime
 
 
 class Worker:
-    def __init__(self, logger: Logger, pool: Pool, client: Crous) -> None:
+    def __init__(self, logger: Logger, pool: Pool, client: Crous, restaurants: list[int] = None) -> None:
         """
         Constructeur de la classe Worker.
         
@@ -16,10 +16,13 @@ class Worker:
         :type pool: Pool
         :param client: Le client Crous
         :type client: Crous
+        :param restaurants: Les restaurants actifs
+        :type restaurants: list[int]
         """
         self.logger = logger
         self.pool = pool
         self.client = client
+        self.restaurants = restaurants
 
         self.taskId = None
         self.requests = 0
@@ -166,6 +169,9 @@ class Worker:
                             datetime.now()
                         )
 
+                    if restaurant.id in self.restaurants:
+                        self.restaurants.pop(restaurant.id)
+
                     if self.taskId:
                         await connection.execute(
                             """
@@ -276,3 +282,25 @@ class Worker:
                                             ordreDish,
                                             platid
                                         )
+
+
+    async def updateRestaurantsStatus(self) -> None:
+        """
+        Met à jour le statut des restaurants.
+        """
+        self.logger.info("Mise à jour du statut des restaurants...")
+
+        for restaurant in self.restaurants:
+            async with self.pool.acquire() as connection:
+                connection: Connection
+
+                await connection.execute(
+                    """
+                        UPDATE RESTAURANT
+                        SET ACTIF = FALSE
+                        WHERE RID = $1
+                    """, 
+                    restaurant
+                )
+
+        self.logger.info("Statut des restaurants mis à jour !")

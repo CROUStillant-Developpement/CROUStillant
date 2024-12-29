@@ -44,11 +44,19 @@ async def main():
     logger.info("Connexion à la base de données établie !")
 
 
+    # Récupération des restaurants actifs dans la base de données
+    async with pool.acquire() as connection:
+        connection: Connection
+
+        restaurants = await connection.fetch("SELECT RID FROM RESTAURANT WHERE ACTIF = TRUE;")
+
+
     # Création du worker
     worker = Worker(
         logger=logger,
         pool=pool,
         client=crous,
+        restaurants=restaurants
     )
 
 
@@ -64,8 +72,8 @@ async def main():
     year = datetime.now(timezone("Europe/Paris")).year
     stats = await worker.getStats()
     start = datetime.now()
-    
-    
+
+
     # Création d'une tâche de fond pour mettre à jour les données
     async with pool.acquire() as connection:
         connection: Connection
@@ -74,12 +82,12 @@ async def main():
             """
                 INSERT INTO TACHE (
                     DEBUT, DEBUT_REGIONS, DEBUT_RESTAURANTS, DEBUT_TYPES_RESTAURANTS, DEBUT_MENUS, DEBUT_REPAS, 
-                    DEBUT_CATEGORIES, DEBUT_PLATS, DEBUT_COMPOSITIONS
+                    DEBUT_CATEGORIES, DEBUT_PLATS, DEBUT_COMPOSITIONS, DEBUT_ACTIFS
                 )
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9);
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10);
             """, 
             start, stats['regions'], stats['restaurants'], stats['types_restaurants'], stats['menus'], 
-            stats['repas'], stats['categories'], stats['plats'], stats['compositions']
+            stats['repas'], stats['categories'], stats['plats'], stats['compositions'], len(restaurants)
         )
 
         taskId = await connection.fetchval("SELECT MAX(ID) FROM TACHE;")
@@ -104,6 +112,7 @@ Nombre de repas : `{stats['repas']:,d}`
 Nombre de catégories : `{stats['categories']:,d}`
 Nombre de plats : `{stats['plats']:,d}`
 Nombre de compositions : `{stats['compositions']:,d}`
+Nombre de restaurants actifs : `{len(restaurants):,d}`
         """
     )
     embed.add_field(
@@ -129,6 +138,17 @@ Tâche **`#{taskId}`**
     logger.info("Données chargées !")
 
 
+    # Mise à jour des statuts des restaurants inactifs
+    await worker.updateRestaurantsStatus()
+
+
+    # Récupération des restaurants actifs dans la base de données
+    async with pool.acquire() as connection:
+        connection: Connection
+
+        restaurants = await connection.fetch("SELECT RID FROM RESTAURANT WHERE ACTIF = TRUE;")
+
+
     # Shutdown message
     end = datetime.now()
     elapsed = end - start
@@ -151,6 +171,7 @@ Nombre de repas : `{stats['repas']:,d}`
 Nombre de catégories : `{stats['categories']:,d}`
 Nombre de plats : `{stats['plats']:,d}`
 Nombre de compositions : `{stats['compositions']:,d}`
+Nombre de restaurants actifs : `{len(restaurants):,d}
         """
     )
     embed.add_field(
@@ -176,11 +197,12 @@ Nombre de requêtes : `{worker.requests:,d}` (`{round(worker.requests / elapsed.
             """
                 UPDATE TACHE
                 SET FIN = $1, FIN_REGIONS = $2, FIN_RESTAURANTS = $3, FIN_TYPES_RESTAURANTS = $4, FIN_MENUS = $5, 
-                    FIN_REPAS = $6, FIN_CATEGORIES = $7, FIN_PLATS = $8, FIN_COMPOSITIONS = $9, REQUETES = $10
-                WHERE ID = $11;
+                    FIN_REPAS = $6, FIN_CATEGORIES = $7, FIN_PLATS = $8, FIN_COMPOSITIONS = $9, FIN_ACTIFS = $10,
+                    REQUETES = $11
+                WHERE ID = $12;
             """,
             end, stats['regions'], stats['restaurants'], stats['types_restaurants'], stats['menus'], stats['repas'],
-            stats['categories'], stats['plats'], stats['compositions'], worker.requests, worker.taskId
+            stats['categories'], stats['plats'], stats['compositions'], len(restaurants), worker.requests, taskId
         )
 
 
