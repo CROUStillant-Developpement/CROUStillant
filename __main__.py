@@ -171,7 +171,7 @@ Nombre de repas : `{stats['repas']:,d}`
 Nombre de catégories : `{stats['categories']:,d}`
 Nombre de plats : `{stats['plats']:,d}`
 Nombre de compositions : `{stats['compositions']:,d}`
-Nombre de restaurants actifs : `{len(restaurants):,d}
+Nombre de restaurants actifs : `{len(restaurants):,d}`
         """
     )
     embed.add_field(

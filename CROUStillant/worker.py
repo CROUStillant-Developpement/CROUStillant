@@ -182,10 +182,13 @@ class Worker:
                             self.taskId
                         )
 
-                    if restaurant.open:
-                        await self.loadMenus(region, restaurant)
-                    else:
-                        self.logger.debug(f"Le restaurant {restaurant.title} est fermé ! Aucun menu ne sera chargé.")
+                    # if restaurant.open:
+                    #     await self.loadMenus(region, restaurant)
+                    # else:
+                    #     self.logger.debug(f"Le restaurant {restaurant.title} est fermé ! Aucun menu ne sera chargé.")
+
+                    # Le restaurant peut être fermé aujourd'hui mais les menus peuvent être disponibles pour les jours suivants
+                    await self.loadMenus(region, restaurant)
 
 
     async def loadMenus(self, region: Region, ru: RU) -> None:
