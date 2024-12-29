@@ -170,7 +170,7 @@ class Worker:
                         )
 
                     if restaurant.id in self.restaurants:
-                        self.restaurants.pop(restaurant.id)
+                        self.restaurants.remove(restaurant.id)
 
                     if self.taskId:
                         await connection.execute(
