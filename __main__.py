@@ -56,7 +56,7 @@ async def main():
         logger=logger,
         pool=pool,
         client=crous,
-        restaurants=restaurants
+        restaurants=[restaurant['rid'] for restaurant in restaurants]
     )
 
 
