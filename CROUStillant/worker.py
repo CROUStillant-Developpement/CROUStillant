@@ -3,10 +3,11 @@ from CROUStillant.logger import Logger
 from asyncpg import Pool, Connection
 from json import dumps
 from datetime import datetime
+from io import BytesIO
 
 
 class Worker:
-    def __init__(self, logger: Logger, pool: Pool, client: Crous, restaurants: list[int] = None) -> None:
+    def __init__(self, logger: Logger, pool: Pool, client: Crous, restaurants: list[int]) -> None:
         """
         Constructeur de la classe Worker.
         
@@ -112,6 +113,13 @@ class Worker:
                 for restaurant in restaurants:
                     restaurant: RU
 
+
+                    # Vérifie si le restaurant était actif lors de la dernière mise à jour. Limite le nombre de requêtes inutiles.
+                    if restaurant.id not in self.restaurants:
+                        self.logger.debug(f"Le restaurant {restaurant.title} n'est pas actif !")
+                        continue
+
+
                     tpRestaurantID = await connection.fetchval("SELECT IDTPR FROM TYPE_RESTAURANT WHERE LIBELLE = $1", restaurant.type)
 
                     if not tpRestaurantID:
@@ -169,8 +177,17 @@ class Worker:
                             datetime.now()
                         )
 
+
+                    if restaurant.image_url:
+                        lastUpdate = await connection.fetchval("SELECT DERNIERE_MODIFICATION FROM IMAGE WHERE IMAGE_URL = $1", restaurant.image_url)
+
+                        if not lastUpdate or (datetime.now() - lastUpdate).days >= 7:
+                            await self.loadImage(restaurant.image_url)
+
+
                     if restaurant.id in self.restaurants:
                         self.restaurants.remove(restaurant.id)
+
 
                     if self.taskId:
                         await connection.execute(
@@ -181,6 +198,7 @@ class Worker:
                             restaurant.id, 
                             self.taskId
                         )
+
 
                     # if restaurant.open:
                     #     await self.loadMenus(region, restaurant)
@@ -259,7 +277,7 @@ class Worker:
 
                                 for ordreDish, dish in enumerate(category.dishes):
                                     dishExist = await connection.fetchval("SELECT COUNT(*) FROM PLAT WHERE LIBELLE = $1", dish.name)
-                                    
+
                                     if dishExist == 0:
                                         await connection.execute(
                                             """
@@ -271,9 +289,9 @@ class Worker:
                                         )
 
                                     platid = await connection.fetchval("SELECT PLATID FROM PLAT WHERE LIBELLE = $1", dish.name)
-                                    
+
                                     compositionExist = await connection.fetchval("SELECT COUNT(*) FROM COMPOSITION WHERE CATID = $1 AND PLATID = $2", catid, platid)
-                                    
+
                                     if compositionExist == 0:
                                         await connection.execute(
                                             """
@@ -285,6 +303,53 @@ class Worker:
                                             ordreDish,
                                             platid
                                         )
+
+
+    async def loadImage(self, image_url: str) -> None:
+        """
+        Charge une image et l'enregistre dans la base de données.
+        Cette méthode est utilisée pour éviter de charger plusieurs fois la même image et de limiter les requêtes inutiles à l'API du CROUS.
+
+        :param image_url: L'URL de l'image
+        :type image_url: str
+        """
+        try:
+            self.logger.debug(f"GET {image_url}")
+
+            async with self.client.client.session.get(image_url) as resp:
+                image_binary = BytesIO(await resp.read())
+
+            self.logger.info(f"Image {image_url} chargée !")
+        except Exception as e:
+            self.logger.error(f"Impossible de charger l'image {image_url} ({e}) !")
+            image_binary = None
+
+
+        if image_binary:
+            async with self.pool.acquire() as connection:
+                connection: Connection
+
+                await connection.execute(
+                    """
+                        INSERT INTO IMAGE (
+                            IMAGE_URL, RAW_IMAGE, DERNIERE_MODIFICATION
+                        )
+                        VALUES (
+                            $1, $2, $3
+                        )
+                        ON CONFLICT (IMAGE_URL) DO UPDATE SET 
+                            RAW_IMAGE = $1
+                            DERNIERE_MODIFICATION = $3
+                        WHERE
+                            IMAGE_URL = $2
+                    """, 
+                    image_url,
+                    image_binary,
+                    datetime.now()
+                )
+
+
+            self.logger.info(f"Image {image_url} enregistrée !")
 
 
     async def updateRestaurantsStatus(self) -> None:
