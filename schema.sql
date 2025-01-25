@@ -89,7 +89,17 @@ CREATE TABLE LOGS(
     MESSAGE VARCHAR(1000),
     CONSTRAINT FK_LOGS_TYPE_LOG FOREIGN KEY (IDTPL) REFERENCES TYPE_LOG(IDTPL),
     CONSTRAINT PK_LOGS PRIMARY KEY (GUILD_ID, IDTPL, LOG_DATE)
-);
+) PARTITION BY HASH(GUILD_ID);
+
+-- Création des partitions pour la table LOGS
+DO
+$$
+BEGIN
+    FOR i IN 0..29 LOOP
+        EXECUTE format('CREATE TABLE logs_partition_%s PARTITION OF LOGS FOR VALUES WITH (modulus 30, remainder %s)', i, i);
+    END LOOP;
+END;
+$$;
 
 
 -- Menu
