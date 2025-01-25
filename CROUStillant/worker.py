@@ -327,10 +327,37 @@ class Worker:
 
 
         if image_binary:
-            image = Image.open(image_binary)
+            try:
+                image = Image.open(image_binary)
+            except Exception as e:
+                self.logger.error(f"Impossible de charger l'image {image_url} ({e}) !")
+
+                # Enregistre l'image sans le contenu brut si l'image n'est pas valide
+                async with self.pool.acquire() as connection:
+                    connection: Connection
+
+                    await connection.execute(
+                        """
+                            INSERT INTO RESTAURANT_IMAGE (
+                                IMAGE_URL, RAW_IMAGE, DERNIERE_MODIFICATION
+                            )
+                            VALUES (
+                                $1, NULL, $2
+                            )
+                            ON CONFLICT (IMAGE_URL) DO UPDATE SET 
+                                DERNIERE_MODIFICATION = $2
+                        """, 
+                        image_url,
+                        datetime.now()
+                    )
+
+                return
+
+            if not image.mode == 'RGB':
+                image = image.convert('RGB')
 
             b = BytesIO()
-            image.save(b, format='PNG', compress_level=1)
+            image.save(b, format='JPEG', compress_level=1, quality=95)
             image_bytes = b.getvalue()
 
             async with self.pool.acquire() as connection:
@@ -345,10 +372,8 @@ class Worker:
                             $1, $2, $3
                         )
                         ON CONFLICT (IMAGE_URL) DO UPDATE SET 
-                            RAW_IMAGE = $1,
+                            RAW_IMAGE = $2,
                             DERNIERE_MODIFICATION = $3
-                        WHERE
-                            IMAGE_URL = $2
                     """, 
                     image_url,
                     image_bytes,
