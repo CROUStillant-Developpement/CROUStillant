@@ -338,7 +338,7 @@ class Worker:
                             $1, $2, $3
                         )
                         ON CONFLICT (IMAGE_URL) DO UPDATE SET 
-                            RAW_IMAGE = $1
+                            RAW_IMAGE = $1,
                             DERNIERE_MODIFICATION = $3
                         WHERE
                             IMAGE_URL = $2
