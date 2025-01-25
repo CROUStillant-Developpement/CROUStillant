@@ -4,6 +4,7 @@ from asyncpg import Pool, Connection
 from json import dumps
 from datetime import datetime
 from io import BytesIO
+from PIL import Image
 
 
 class Worker:
@@ -326,6 +327,12 @@ class Worker:
 
 
         if image_binary:
+            image = Image.open(image_binary)
+
+            b = BytesIO()
+            image.save(b, format='PNG', compress_level=1)
+            image_bytes = b.getvalue()
+
             async with self.pool.acquire() as connection:
                 connection: Connection
 
@@ -344,7 +351,7 @@ class Worker:
                             IMAGE_URL = $2
                     """, 
                     image_url,
-                    image_binary.getvalue(),
+                    image_bytes,
                     datetime.now()
                 )
 
