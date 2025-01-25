@@ -344,7 +344,7 @@ class Worker:
                             IMAGE_URL = $2
                     """, 
                     image_url,
-                    image_binary,
+                    image_binary.getvalue(),
                     datetime.now()
                 )
 
