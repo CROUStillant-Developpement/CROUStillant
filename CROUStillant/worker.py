@@ -179,9 +179,9 @@ class Worker:
 
 
                     if restaurant.image_url:
-                        lastUpdate = await connection.fetchval("SELECT DERNIERE_MODIFICATION FROM IMAGE WHERE IMAGE_URL = $1", restaurant.image_url)
+                        lastUpdate = await connection.fetchval("SELECT DERNIERE_MODIFICATION FROM RESTAURANT_IMAGE WHERE IMAGE_URL = $1", restaurant.image_url)
 
-                        if not lastUpdate or (datetime.now() - lastUpdate).days >= 7:
+                        if not lastUpdate or ((datetime.now() - lastUpdate).days >= 7):
                             await self.loadImage(restaurant.image_url)
 
 
@@ -331,7 +331,7 @@ class Worker:
 
                 await connection.execute(
                     """
-                        INSERT INTO IMAGE (
+                        INSERT INTO RESTAURANT_IMAGE (
                             IMAGE_URL, RAW_IMAGE, DERNIERE_MODIFICATION
                         )
                         VALUES (
