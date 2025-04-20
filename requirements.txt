@@ -1,8 +1,0 @@
-aiohttp==3.11.12
-asyncpg==0.29.0
-python-dotenv==1.0.1
-async-timeout==4.0.3
-pytz==2024.2
-discord.py==2.3.2
-git+https://github.com/CROUStillant-Developpement/CrousPy.git
-pillow==11.1.0
