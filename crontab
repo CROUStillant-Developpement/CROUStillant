@@ -1,1 +1,1 @@
-0 23,7,9,13 * * * /usr/local/bin/python /CROUStillant/__main__.py >> /CROUStillant/crontab.log
+0 23,7,9,13 * * * uv run --project /CROUStillant /CROUStillant/__main__.py >> /CROUStillant/crontab.log
