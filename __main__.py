@@ -225,6 +225,13 @@ Nombre de requêtes : `{worker.requests:,d}` (`{round(worker.requests / elapsed.
             stats['categories'], stats['plats'], stats['compositions'], len(restaurants), worker.requests, taskId
         )
 
+        # Rafraîchissement de la vue matérialisée des statistiques
+        await connection.execute(
+            """
+                REFRESH MATERIALIZED VIEW v_stats;
+            """
+        )
+
 
     # Fermeture de la session et de la connexion à la base de données
     await pool.close()
