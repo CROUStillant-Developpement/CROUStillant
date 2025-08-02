@@ -42,15 +42,7 @@ class Worker:
 
             stats = await connection.fetchrow(
                 """
-                    SELECT
-                        (SELECT COUNT(*) FROM REGION) AS regions,
-                        (SELECT COUNT(*) FROM RESTAURANT) AS restaurants,
-                        (SELECT COUNT(*) FROM TYPE_RESTAURANT) AS types_restaurants,
-                        (SELECT COUNT(*) FROM MENU) AS menus,
-                        (SELECT COUNT(*) FROM REPAS) AS repas,
-                        (SELECT COUNT(*) FROM CATEGORIE) AS categories,
-                        (SELECT COUNT(*) FROM PLAT) AS plats,
-                        (SELECT COUNT(*) FROM COMPOSITION) AS compositions
+                    SELECT * FROM v_stats;
                 """
             )
 
