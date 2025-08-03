@@ -236,7 +236,6 @@ Nombre de requêtes : `{worker.requests:,d}` (`{round(worker.requests / elapsed.
     await sendWebhook(webhook=webhook, embed=embed)
 
 
-
     # Fermeture de la session et de la connexion à la base de données
     await pool.close()
     await session.close()
