@@ -169,9 +169,36 @@ Tâche **`#{taskId}`**
         restaurants = await connection.fetch("SELECT RID FROM RESTAURANT WHERE ACTIF = TRUE;")
 
 
-    # Shutdown message
+    # Fin de la tâche de fond
     end = datetime.now()
     elapsed = end - start
+
+
+    # Mise à jour des données
+    async with pool.acquire() as connection:
+        connection: Connection
+
+        await connection.execute(
+            """
+                UPDATE TACHE
+                SET FIN = $1, FIN_REGIONS = $2, FIN_RESTAURANTS = $3, FIN_TYPES_RESTAURANTS = $4, FIN_MENUS = $5, 
+                    FIN_REPAS = $6, FIN_CATEGORIES = $7, FIN_PLATS = $8, FIN_COMPOSITIONS = $9, FIN_ACTIFS = $10,
+                    REQUETES = $11
+                WHERE ID = $12;
+            """,
+            end, stats['regions'], stats['restaurants'], stats['types_restaurants'], stats['menus'], stats['repas'],
+            stats['categories'], stats['plats'], stats['compositions'], len(restaurants), worker.requests, taskId
+        )
+
+        # Rafraîchissement de la vue matérialisée des statistiques
+        await connection.execute(
+            """
+                REFRESH MATERIALIZED VIEW v_stats;
+            """
+        )
+
+
+    # Envoi du message de fin
     stats = await worker.getStats()
 
     embed = Embed(
@@ -208,22 +235,6 @@ Nombre de requêtes : `{worker.requests:,d}` (`{round(worker.requests / elapsed.
 
     await sendWebhook(webhook=webhook, embed=embed)
 
-
-    # Mise à jour des données
-    async with pool.acquire() as connection:
-        connection: Connection
-
-        await connection.execute(
-            """
-                UPDATE TACHE
-                SET FIN = $1, FIN_REGIONS = $2, FIN_RESTAURANTS = $3, FIN_TYPES_RESTAURANTS = $4, FIN_MENUS = $5, 
-                    FIN_REPAS = $6, FIN_CATEGORIES = $7, FIN_PLATS = $8, FIN_COMPOSITIONS = $9, FIN_ACTIFS = $10,
-                    REQUETES = $11
-                WHERE ID = $12;
-            """,
-            end, stats['regions'], stats['restaurants'], stats['types_restaurants'], stats['menus'], stats['repas'],
-            stats['categories'], stats['plats'], stats['compositions'], len(restaurants), worker.requests, taskId
-        )
 
 
     # Fermeture de la session et de la connexion à la base de données
