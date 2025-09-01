@@ -178,6 +178,20 @@ Tâche **`#{taskId}`**
     async with pool.acquire() as connection:
         connection: Connection
 
+        # Rafraîchissement de la vue matérialisée des statistiques
+        await connection.execute(
+            """
+                REFRESH MATERIALIZED VIEW v_stats;
+            """
+        )
+
+    # Récupération des statistiques finales
+    stats = await worker.getStats()
+
+    # Mise à jour de la tâche
+    async with pool.acquire() as connection:
+        connection: Connection
+
         await connection.execute(
             """
                 UPDATE TACHE
@@ -190,17 +204,8 @@ Tâche **`#{taskId}`**
             stats['categories'], stats['plats'], stats['compositions'], len(restaurants), worker.requests, taskId
         )
 
-        # Rafraîchissement de la vue matérialisée des statistiques
-        await connection.execute(
-            """
-                REFRESH MATERIALIZED VIEW v_stats;
-            """
-        )
-
 
     # Envoi du message de fin
-    stats = await worker.getStats()
-
     embed = Embed(
         title="CROUStillant",
         description=f"Tâche de fond terminée ! Données chargées.\nTemps écoulé : `{round(elapsed.total_seconds(), 2)}` secondes.",
