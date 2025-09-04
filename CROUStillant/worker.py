@@ -248,54 +248,77 @@ class Worker:
                                 meal.name,
                                 menu.id,  
                             )
+                        else:
+                            # Supprime les anciennes catégories et compositions associées au repas pour éviter 
+                            # les doublons et les données obsolètes après des mises à jour du menu
+                            rpid_old = await connection.fetchval(
+                                "SELECT RPID FROM REPAS WHERE TPR = $1 AND MID = $2",
+                                meal.name,
+                                menu.id
+                            )
 
-                            rpid = await connection.fetchval("SELECT RPID FROM REPAS WHERE TPR = $1 AND MID = $2", meal.name, menu.id)
+                            await connection.execute(
+                                """
+                                    DELETE FROM COMPOSITION 
+                                    WHERE CATID IN (
+                                        SELECT CATID FROM CATEGORIE WHERE RPID = $1
+                                    )
+                                """,
+                                rpid_old
+                            )
 
-                            for ordreCategory, category in enumerate(meal.categories):
-                                categoryExist = await connection.fetchval("SELECT COUNT(*) FROM CATEGORIE WHERE TPCAT = $1 AND RPID = $2", category.name, rpid)
+                            await connection.execute(
+                                "DELETE FROM CATEGORIE WHERE RPID = $1",
+                                rpid_old
+                            )
 
-                                if categoryExist == 0:
+                        rpid = await connection.fetchval("SELECT RPID FROM REPAS WHERE TPR = $1 AND MID = $2", meal.name, menu.id)
+
+                        for ordreCategory, category in enumerate(meal.categories):
+                            categoryExist = await connection.fetchval("SELECT COUNT(*) FROM CATEGORIE WHERE TPCAT = $1 AND RPID = $2", category.name, rpid)
+
+                            if categoryExist == 0:
+                                await connection.execute(
+                                    """
+                                        INSERT INTO CATEGORIE (TPCAT, ORDRE, RPID)
+                                        VALUES ($1, $2, $3) 
+                                        ON CONFLICT DO NOTHING
+                                    """, 
+                                    category.name,
+                                    ordreCategory,
+                                    rpid
+                                )
+
+                            catid = await connection.fetchval("SELECT CATID FROM CATEGORIE WHERE TPCAT = $1 AND RPID = $2", category.name, rpid)
+
+                            for ordreDish, dish in enumerate(category.dishes):
+                                dishExist = await connection.fetchval("SELECT COUNT(*) FROM PLAT WHERE LIBELLE = $1", dish.name)
+
+                                if dishExist == 0:
                                     await connection.execute(
                                         """
-                                            INSERT INTO CATEGORIE (TPCAT, ORDRE, RPID)
+                                            INSERT INTO PLAT (LIBELLE)
+                                            VALUES ($1) 
+                                            ON CONFLICT DO NOTHING
+                                        """, 
+                                        dish.name
+                                    )
+
+                                platid = await connection.fetchval("SELECT PLATID FROM PLAT WHERE LIBELLE = $1", dish.name)
+
+                                compositionExist = await connection.fetchval("SELECT COUNT(*) FROM COMPOSITION WHERE CATID = $1 AND PLATID = $2", catid, platid)
+
+                                if compositionExist == 0:
+                                    await connection.execute(
+                                        """
+                                            INSERT INTO COMPOSITION (CATID, ORDRE, PLATID)
                                             VALUES ($1, $2, $3) 
                                             ON CONFLICT DO NOTHING
                                         """, 
-                                        category.name,
-                                        ordreCategory,
-                                        rpid
+                                        catid,
+                                        ordreDish,
+                                        platid
                                     )
-
-                                catid = await connection.fetchval("SELECT CATID FROM CATEGORIE WHERE TPCAT = $1 AND RPID = $2", category.name, rpid)
-
-                                for ordreDish, dish in enumerate(category.dishes):
-                                    dishExist = await connection.fetchval("SELECT COUNT(*) FROM PLAT WHERE LIBELLE = $1", dish.name)
-
-                                    if dishExist == 0:
-                                        await connection.execute(
-                                            """
-                                                INSERT INTO PLAT (LIBELLE)
-                                                VALUES ($1) 
-                                                ON CONFLICT DO NOTHING
-                                            """, 
-                                            dish.name
-                                        )
-
-                                    platid = await connection.fetchval("SELECT PLATID FROM PLAT WHERE LIBELLE = $1", dish.name)
-
-                                    compositionExist = await connection.fetchval("SELECT COUNT(*) FROM COMPOSITION WHERE CATID = $1 AND PLATID = $2", catid, platid)
-
-                                    if compositionExist == 0:
-                                        await connection.execute(
-                                            """
-                                                INSERT INTO COMPOSITION (CATID, ORDRE, PLATID)
-                                                VALUES ($1, $2, $3) 
-                                                ON CONFLICT DO NOTHING
-                                            """, 
-                                            catid,
-                                            ordreDish,
-                                            platid
-                                        )
 
 
     async def loadImage(self, image_url: str) -> None:
