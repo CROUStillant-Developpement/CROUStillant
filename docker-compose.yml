@@ -27,15 +27,15 @@ services:
     container_name: pgbouncer
     image: edoburu/pgbouncer:latest
     environment:
-      DATABASES: |
-        ${POSTGRES_DATABASE} = host=db port=5432 dbname=${POSTGRES_DATABASE} user=${POSTGRES_USER} password=${POSTGRES_PASSWORD}
-      PGBOUNCER_LISTEN_ADDR: 0.0.0.0
-      PGBOUNCER_LISTEN_PORT: 6432
-      PGBOUNCER_MAX_CLIENT_CONN: 500
-      PGBOUNCER_DEFAULT_POOL_SIZE: 20
-      PGBOUNCER_POOL_MODE: transaction
-      AUTH_TYPE: md5
-      AUTH_FILE: /etc/pgbouncer/userlist.txt
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_USER: ${POSTGRES_USER}
+      DB_PASSWORD: ${POSTGRES_PASSWORD}
+      DB_NAME: ${POSTGRES_DATABASE}
+      POOL_MODE: transaction
+      MAX_CLIENT_CONN: 500
+      DEFAULT_POOL_SIZE: 20
+      RESERVE_POOL_SIZE: 5
     ports:
       - "6432:6432"
     volumes:
