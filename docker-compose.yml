@@ -23,6 +23,40 @@ services:
     networks:
       - CROUStillantNetwork
 
+  pgbouncer:
+    container_name: pgbouncer
+    image: edoburu/pgbouncer:latest
+    environment:
+      DATABASES: |
+        ${POSTGRES_DATABASE} = host=db port=5432 dbname=${POSTGRES_DATABASE} user=${POSTGRES_USER} password=${POSTGRES_PASSWORD}
+      PGBOUNCER_LISTEN_ADDR: 0.0.0.0
+      PGBOUNCER_LISTEN_PORT: 6432
+      PGBOUNCER_MAX_CLIENT_CONN: 500
+      PGBOUNCER_DEFAULT_POOL_SIZE: 20
+      PGBOUNCER_POOL_MODE: transaction
+      AUTH_TYPE: md5
+      AUTH_FILE: /etc/pgbouncer/userlist.txt
+    ports:
+      - "6432:6432"
+    volumes:
+      - ./userlist.txt:/etc/pgbouncer/userlist.txt:ro
+    restart: unless-stopped
+    networks:
+      - CROUStillantNetwork
+
+  pgbouncer-exporter:
+    container_name: pgbouncer-exporter
+    image: prometheuscommunity/pgbouncer-exporter:latest
+    command:
+      - --pgBouncer.connectionString=postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@pgbouncer:6432/pgbouncer?sslmode=disable
+    ports:
+      - "9127:9127"
+    depends_on:
+      - pgbouncer
+    restart: unless-stopped
+    networks:
+      - CROUStillantNetwork
+
   script:
     container_name: script
     build:
