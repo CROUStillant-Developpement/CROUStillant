@@ -13,8 +13,12 @@ dependencies = [
     "pillow>=11.3.0",
     "python-dotenv>=1.1.0",
     "pytz>=2025.2",
-    "ruff>=0.12.12",
 ]
 
 [tool.uv.sources]
 crouspy = { git = "https://github.com/CROUStillant-Developpement/CrousPy.git" }
+
+[dependency-groups]
+dev = [
+    "ruff>=0.14.1",
+]
