@@ -1,7 +1,7 @@
-FROM python:3.12-slim
+FROM python:3.12.10-alpine
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
-RUN apt-get update && apt-get install -y git cron && rm -rf /var/lib/apt/lists/*
+RUN apk add --no-cache git
 
 COPY . ./CROUStillant
 
@@ -11,4 +11,4 @@ RUN uv sync --frozen
 
 RUN crontab crontab
 
-CMD ["cron", "-f"]
+CMD ["crond", "-f"]
