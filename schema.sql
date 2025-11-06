@@ -366,3 +366,5 @@ SELECT
     (SELECT COUNT(*) FROM PLAT) AS plats,
     (SELECT COUNT(*) FROM COMPOSITION) AS compositions
 WITH DATA;
+
+CREATE UNIQUE INDEX IF NOT EXISTS v_stats_unique_idx ON v_stats ((true));

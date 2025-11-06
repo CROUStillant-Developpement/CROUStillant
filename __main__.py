@@ -197,7 +197,7 @@ Tâche **`#{taskId}`**
         # Rafraîchissement de la vue matérialisée des statistiques
         await connection.execute(
             """
-                REFRESH MATERIALIZED VIEW v_stats;
+                REFRESH MATERIALIZED VIEW CONCURRENTLY v_stats;
             """
         )
 
