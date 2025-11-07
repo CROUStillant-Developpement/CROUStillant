@@ -356,6 +356,7 @@ EXECUTE FUNCTION notifyOnInsert();
 -- Vue pour les statistiques
 CREATE MATERIALIZED VIEW v_stats AS
 SELECT
+    1 AS id,
     (SELECT COUNT(*) FROM REGION) AS regions,
     (SELECT COUNT(*) FROM RESTAURANT) AS restaurants,
     (SELECT COUNT(*) FROM RESTAURANT WHERE ACTIF = TRUE) AS restaurants_actifs,
@@ -367,4 +368,4 @@ SELECT
     (SELECT COUNT(*) FROM COMPOSITION) AS compositions
 WITH DATA;
 
-CREATE UNIQUE INDEX IF NOT EXISTS v_stats_unique_idx ON v_stats ((true));
+CREATE UNIQUE INDEX IF NOT EXISTS v_stats_unique_idx ON v_stats (id);
