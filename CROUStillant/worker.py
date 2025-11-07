@@ -326,14 +326,29 @@ class Worker:
                                 )
 
                                 if dishExist == 0:
-                                    await connection.execute(
-                                        """
-                                            INSERT INTO PLAT (LIBELLE)
-                                            VALUES ($1) 
-                                            ON CONFLICT DO NOTHING
-                                        """,
-                                        dish.name,
-                                    )
+                                    # Vérifie la longueur du nom du plat pour éviter les erreurs de dépassement de capacité de la base de données
+                                    if len(dish.name) >= 499:
+                                        self.logger.critical(
+                                            f"Le plat '{dish.name}' est trop long ({len(dish.name)} caractères). Debug: [RID: {ru.id}, RPID: {rpid}, CATID: {catid}]"
+                                        )
+
+                                        await connection.execute(
+                                            """
+                                                INSERT INTO PLAT (LIBELLE)
+                                                VALUES ($1) 
+                                                ON CONFLICT DO NOTHING
+                                            """,
+                                            f"{dish.name[:495]}..." ,
+                                        )
+                                    else:
+                                        await connection.execute(
+                                            """
+                                                INSERT INTO PLAT (LIBELLE)
+                                                VALUES ($1) 
+                                                ON CONFLICT DO NOTHING
+                                            """,
+                                            dish.name,
+                                        )
 
                                 platid = await connection.fetchval(
                                     "SELECT PLATID FROM PLAT WHERE LIBELLE = $1",
