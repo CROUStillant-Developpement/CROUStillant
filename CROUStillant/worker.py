@@ -332,14 +332,8 @@ class Worker:
                                             f"Le plat '{dish.name}' est trop long ({len(dish.name)} caractères). Debug: [RID: {ru.id}, RPID: {rpid}, CATID: {catid}]"
                                         )
 
-                                        await connection.execute(
-                                            """
-                                                INSERT INTO PLAT (LIBELLE)
-                                                VALUES ($1) 
-                                                ON CONFLICT DO NOTHING
-                                            """,
-                                            f"{dish.name[:495]}..." ,
-                                        )
+                                        # Ignore ce plat
+                                        continue
                                     else:
                                         await connection.execute(
                                             """
