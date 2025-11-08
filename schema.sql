@@ -321,6 +321,17 @@ END;
 $$;
 
 
+-- Données géographiques
+CREATE TABLE GEO_DATA(
+    COUNTRY_CODE VARCHAR(2),
+    REGION VARCHAR(100),
+    CITY VARCHAR(100) PRIMARY KEY,
+    LATITUDE FLOAT,
+    LONGITUDE FLOAT,
+    USER_COUNT INT
+);
+
+
 -- Indexes
 CREATE INDEX idx_menu_date ON MENU (DATE);
 CREATE INDEX idx_repas_tpr ON REPAS (TPR);
@@ -332,6 +343,7 @@ CREATE INDEX idx_tache_fin ON TACHE (FIN);
 CREATE INDEX idx_bucket_key ON BUCKET (KEY);
 CREATE INDEX idx_requests_logs_key ON REQUESTS_LOGS (KEY);
 CREATE INDEX idx_requests_logs_created_at ON REQUESTS_LOGS (CREATED_AT);
+CREATE INDEX idx_geo_data_region ON GEO_DATA (REGION);
 
 
 -- Listener
