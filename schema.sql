@@ -364,6 +364,27 @@ FOR EACH ROW
 EXECUTE FUNCTION notifyOnInsert();
 
 
+-- Listener for restaurant active state change
+CREATE OR REPLACE FUNCTION notifyOnActifChange()
+RETURNS TRIGGER AS $$
+DECLARE
+    payload TEXT;
+BEGIN
+    IF OLD.ACTIF IS DISTINCT FROM NEW.ACTIF THEN
+        payload := row_to_json(NEW)::text;
+        PERFORM pg_notify('actif_change', payload);
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+
+CREATE OR REPLACE TRIGGER notifyOnActifChange
+AFTER UPDATE ON RESTAURANT
+FOR EACH ROW
+EXECUTE FUNCTION notifyOnActifChange();
+
+
 -- Vue pour les statistiques
 CREATE MATERIALIZED VIEW v_stats AS
 SELECT
