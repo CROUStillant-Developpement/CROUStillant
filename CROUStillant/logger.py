@@ -21,7 +21,8 @@ class Logger:
         self.logger = logging.getLogger(f"CROUStillant - {self.file}")
         self.logger.setLevel(logging.DEBUG)
 
-        handler = logging.handlers.RotatingFileHandler(
+        # File handler
+        file_handler = logging.handlers.RotatingFileHandler(
             filename=f"{path}/{self.file}.log",
             encoding="utf-8",
             maxBytes=32 * 1024 * 1024,
@@ -31,8 +32,13 @@ class Logger:
         formatter = logging.Formatter(
             "[{asctime}] [{levelname:<8}] {name}: {message}", dt_fmt, style="{"
         )
-        handler.setFormatter(formatter)
-        self.logger.addHandler(handler)
+        file_handler.setFormatter(formatter)
+        self.logger.addHandler(file_handler)
+
+        # Console handler for Docker logs
+        console_handler = logging.StreamHandler()
+        console_handler.setFormatter(formatter)
+        self.logger.addHandler(console_handler)
 
         self.logger.info("Logger initialisé !")
 
