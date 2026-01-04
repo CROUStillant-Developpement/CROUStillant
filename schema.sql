@@ -2,7 +2,7 @@
     *  CROUStillant - schema.sql
     *  Created by: CROUStillant Développement
     *  Created on: 13/11/2023
-    *  Updated on: 25/01/2025
+    *  Updated on: 04/01/2026
     *  Description: SQL database scheme for the CROUStillant project
 ***************************************************************/
 
@@ -119,6 +119,7 @@ CREATE TABLE MENU
     MID  INT PRIMARY KEY,
     DATE DATE,
     RID  INT,
+    MENU_HASH VARCHAR(64),
     CONSTRAINT FK_MENU_RESTAURANT FOREIGN KEY (RID) REFERENCES RESTAURANT (RID)
 ) PARTITION BY HASH(MID);
 

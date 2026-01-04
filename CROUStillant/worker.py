@@ -1,4 +1,6 @@
-from CrousPy import Crous, Region, RU
+import hashlib
+
+from CrousPy import Crous, Region, RU, Menu
 from CROUStillant.logger import Logger
 from asyncpg import Pool, Connection
 from json import dumps
@@ -215,6 +217,41 @@ class Worker:
                     # Le restaurant peut être fermé aujourd'hui mais les menus peuvent être disponibles pour les jours suivants
                     await self.loadMenus(region, restaurant)
 
+    def compute_menu_hash(self, menu: Menu) -> str:
+        """
+        Calcule un hash unique pour un menu basé sur son contenu complet.
+
+        :param menu: Le menu pour lequel calculer le hash
+        :type menu: Menu
+        :return: Hash SHA256 du contenu du menu
+        :rtype: str
+        """
+        # Créer une représentation structurée du menu pour le hachage
+        # Note: On n'inclut pas l'ID car on compare par ID, uniquement le contenu
+        menu_data = {
+            "date": str(menu.date),
+            "meals": []
+        }
+
+        for meal in menu.meals:
+            meal_data = {
+                "name": meal.name,
+                "categories": []
+            }
+
+            for category in meal.categories:
+                category_data = {
+                    "name": category.name,
+                    "dishes": [dish.name for dish in category.dishes]
+                }
+                meal_data["categories"].append(category_data)
+
+            menu_data["meals"].append(meal_data)
+
+        # Convertir en JSON et calculer le hash
+        menu_json = dumps(menu_data, sort_keys=True, ensure_ascii=False)
+        return hashlib.sha256(menu_json.encode('utf-8')).hexdigest()
+
     async def loadMenus(self, region: Region, ru: RU) -> None:
         """
         Charge les menus et les enregistre dans la base de données.
@@ -237,56 +274,76 @@ class Worker:
 
             async with connection.transaction():
                 for menu in menus:
+                    # Calculer le hash du menu
+                    menu_hash = self.compute_menu_hash(menu)
+
+                    # Vérifier si le menu existe déjà et si son hash a changé
+                    existing_hash = await connection.fetchval(
+                        "SELECT MENU_HASH FROM MENU WHERE MID = $1",
+                        menu.id,
+                    )
+
+                    # Si le hash n'a pas changé, on peut ignorer ce menu
+                    if existing_hash == menu_hash:
+                        self.logger.debug(f"Menu {menu.id} inchangé, skip")
+                        continue
+
+                    # Si le menu existe mais le hash a changé, on doit supprimer l'ancien contenu
+                    if existing_hash is not None:
+                        self.logger.debug(f"Menu {menu.id} modifié, mise à jour nécessaire")
+                        # Supprimer les anciennes données du menu
+                        await connection.execute(
+                            """
+                                DELETE FROM COMPOSITION 
+                                WHERE CATID IN (
+                                    SELECT CATID FROM CATEGORIE WHERE RPID IN (
+                                        SELECT RPID FROM REPAS WHERE MID = $1
+                                    )
+                                )
+                            """,
+                            menu.id,
+                        )
+
+                        await connection.execute(
+                            """
+                                DELETE FROM CATEGORIE 
+                                WHERE RPID IN (
+                                    SELECT RPID FROM REPAS WHERE MID = $1
+                                )
+                            """,
+                            menu.id,
+                        )
+
+                        await connection.execute(
+                            "DELETE FROM REPAS WHERE MID = $1",
+                            menu.id,
+                        )
+
+                    # Insérer ou mettre à jour le menu avec le nouveau hash
                     await connection.execute(
                         """
-                            INSERT INTO MENU (MID, RID, DATE)
-                            VALUES ($1, $2, $3) 
-                            ON CONFLICT DO NOTHING
+                            INSERT INTO MENU (MID, RID, DATE, MENU_HASH)
+                            VALUES ($1, $2, $3, $4) 
+                            ON CONFLICT (MID) DO UPDATE 
+                            SET MENU_HASH = EXCLUDED.MENU_HASH
                         """,
                         menu.id,
                         ru.id,
                         menu.date,
+                        menu_hash,
                     )
 
+                    # Insérer les repas, catégories et compositions
                     for meal in menu.meals:
-                        repasExist = await connection.fetchval(
-                            "SELECT COUNT(*) FROM REPAS WHERE TPR = $1 AND MID = $2",
+                        await connection.execute(
+                            """
+                                INSERT INTO REPAS (TPR, MID)
+                                VALUES ($1, $2) 
+                                ON CONFLICT DO NOTHING
+                            """,
                             meal.name,
                             menu.id,
                         )
-
-                        if repasExist == 0:
-                            await connection.execute(
-                                """
-                                    INSERT INTO REPAS (TPR, MID)
-                                    VALUES ($1, $2) 
-                                    ON CONFLICT DO NOTHING
-                                """,
-                                meal.name,
-                                menu.id,
-                            )
-                        else:
-                            # Supprime les anciennes catégories et compositions associées au repas pour éviter
-                            # les doublons et les données obsolètes après des mises à jour du menu
-                            rpid_old = await connection.fetchval(
-                                "SELECT RPID FROM REPAS WHERE TPR = $1 AND MID = $2",
-                                meal.name,
-                                menu.id,
-                            )
-
-                            await connection.execute(
-                                """
-                                    DELETE FROM COMPOSITION 
-                                    WHERE CATID IN (
-                                        SELECT CATID FROM CATEGORIE WHERE RPID = $1
-                                    )
-                                """,
-                                rpid_old,
-                            )
-
-                            await connection.execute(
-                                "DELETE FROM CATEGORIE WHERE RPID = $1", rpid_old
-                            )
 
                         rpid = await connection.fetchval(
                             "SELECT RPID FROM REPAS WHERE TPR = $1 AND MID = $2",
@@ -295,23 +352,16 @@ class Worker:
                         )
 
                         for ordreCategory, category in enumerate(meal.categories):
-                            categoryExist = await connection.fetchval(
-                                "SELECT COUNT(*) FROM CATEGORIE WHERE TPCAT = $1 AND RPID = $2",
+                            await connection.execute(
+                                """
+                                    INSERT INTO CATEGORIE (TPCAT, ORDRE, RPID)
+                                    VALUES ($1, $2, $3) 
+                                    ON CONFLICT DO NOTHING
+                                """,
                                 category.name,
+                                ordreCategory,
                                 rpid,
                             )
-
-                            if categoryExist == 0:
-                                await connection.execute(
-                                    """
-                                        INSERT INTO CATEGORIE (TPCAT, ORDRE, RPID)
-                                        VALUES ($1, $2, $3) 
-                                        ON CONFLICT DO NOTHING
-                                    """,
-                                    category.name,
-                                    ordreCategory,
-                                    rpid,
-                                )
 
                             catid = await connection.fetchval(
                                 "SELECT CATID FROM CATEGORIE WHERE TPCAT = $1 AND RPID = $2",
@@ -320,52 +370,49 @@ class Worker:
                             )
 
                             for ordreDish, dish in enumerate(category.dishes):
-                                dishExist = await connection.fetchval(
-                                    "SELECT COUNT(*) FROM PLAT WHERE LIBELLE = $1",
-                                    dish.name,
-                                )
+                                # Vérifie la longueur du nom du plat pour éviter les erreurs de dépassement de capacité de la base de données
+                                if len(dish.name) >= 499:
+                                    self.logger.critical(
+                                        f"Le plat '{dish.name}' est trop long ({len(dish.name)} caractères). Debug: [RID: {ru.id}, RPID: {rpid}, CATID: {catid}]"
+                                    )
+                                    # Ignore ce plat
+                                    continue
 
-                                if dishExist == 0:
-                                    # Vérifie la longueur du nom du plat pour éviter les erreurs de dépassement de capacité de la base de données
-                                    if len(dish.name) >= 499:
-                                        self.logger.critical(
-                                            f"Le plat '{dish.name}' est trop long ({len(dish.name)} caractères). Debug: [RID: {ru.id}, RPID: {rpid}, CATID: {catid}]"
-                                        )
+                                if not dish.name.strip():
+                                    self.logger.critical(
+                                        f"Le plat a un nom vide. Debug: [RID: {ru.id}, RPID: {rpid}, CATID: {catid}]"
+                                    )
+                                    # Ignore ce plat
+                                    continue
 
-                                        # Ignore ce plat
-                                        continue
-                                    else:
-                                        await connection.execute(
-                                            """
-                                                INSERT INTO PLAT (LIBELLE)
-                                                VALUES ($1) 
-                                                ON CONFLICT DO NOTHING
-                                            """,
-                                            dish.name,
-                                        )
-
+                                # Essayer d'insérer le plat, ou récupérer l'ID s'il existe déjà
+                                # Note: PLAT n'a pas de contrainte d'unicité sur LIBELLE, donc on vérifie d'abord
                                 platid = await connection.fetchval(
-                                    "SELECT PLATID FROM PLAT WHERE LIBELLE = $1",
+                                    "SELECT PLATID FROM PLAT WHERE LIBELLE = $1 LIMIT 1",
                                     dish.name,
                                 )
 
-                                compositionExist = await connection.fetchval(
-                                    "SELECT COUNT(*) FROM COMPOSITION WHERE CATID = $1 AND PLATID = $2",
+                                if platid is None:
+                                    # Utiliser RETURNING pour obtenir l'ID atomiquement
+                                    platid = await connection.fetchval(
+                                        """
+                                            INSERT INTO PLAT (LIBELLE)
+                                            VALUES ($1)
+                                            RETURNING PLATID
+                                        """,
+                                        dish.name,
+                                    )
+
+                                await connection.execute(
+                                    """
+                                        INSERT INTO COMPOSITION (CATID, ORDRE, PLATID)
+                                        VALUES ($1, $2, $3) 
+                                        ON CONFLICT DO NOTHING
+                                    """,
                                     catid,
+                                    ordreDish,
                                     platid,
                                 )
-
-                                if compositionExist == 0:
-                                    await connection.execute(
-                                        """
-                                            INSERT INTO COMPOSITION (CATID, ORDRE, PLATID)
-                                            VALUES ($1, $2, $3) 
-                                            ON CONFLICT DO NOTHING
-                                        """,
-                                        catid,
-                                        ordreDish,
-                                        platid,
-                                    )
 
     async def loadImage(self, image_url: str) -> None:
         """
