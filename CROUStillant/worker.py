@@ -226,8 +226,8 @@ class Worker:
         :rtype: str
         """
         # Créer une représentation structurée du menu pour le hachage
+        # Note: On n'inclut pas l'ID car on compare par ID, uniquement le contenu
         menu_data = {
-            "id": menu.id,
             "date": str(menu.date),
             "meals": []
         }
@@ -377,24 +377,21 @@ class Worker:
                                     # Ignore ce plat
                                     continue
                                 
-                                # Vérifier si le plat existe déjà
+                                # Essayer d'insérer le plat, ou récupérer l'ID s'il existe déjà
+                                # Note: PLAT n'a pas de contrainte d'unicité sur LIBELLE, donc on vérifie d'abord
                                 platid = await connection.fetchval(
-                                    "SELECT PLATID FROM PLAT WHERE LIBELLE = $1",
+                                    "SELECT PLATID FROM PLAT WHERE LIBELLE = $1 LIMIT 1",
                                     dish.name,
                                 )
                                 
                                 if platid is None:
-                                    await connection.execute(
+                                    # Utiliser RETURNING pour obtenir l'ID atomiquement
+                                    platid = await connection.fetchval(
                                         """
                                             INSERT INTO PLAT (LIBELLE)
-                                            VALUES ($1) 
-                                            ON CONFLICT DO NOTHING
+                                            VALUES ($1)
+                                            RETURNING PLATID
                                         """,
-                                        dish.name,
-                                    )
-                                    
-                                    platid = await connection.fetchval(
-                                        "SELECT PLATID FROM PLAT WHERE LIBELLE = $1",
                                         dish.name,
                                     )
 
