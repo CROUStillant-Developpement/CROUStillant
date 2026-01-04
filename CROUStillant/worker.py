@@ -1,3 +1,5 @@
+import hashlib
+
 from CrousPy import Crous, Region, RU, Menu
 from CROUStillant.logger import Logger
 from asyncpg import Pool, Connection
@@ -5,7 +7,6 @@ from json import dumps
 from datetime import datetime
 from io import BytesIO
 from PIL import Image
-import hashlib
 
 
 class Worker:
@@ -219,7 +220,7 @@ class Worker:
     def compute_menu_hash(self, menu: Menu) -> str:
         """
         Calcule un hash unique pour un menu basé sur son contenu complet.
-        
+
         :param menu: Le menu pour lequel calculer le hash
         :type menu: Menu
         :return: Hash SHA256 du contenu du menu
@@ -231,22 +232,22 @@ class Worker:
             "date": str(menu.date),
             "meals": []
         }
-        
+
         for meal in menu.meals:
             meal_data = {
                 "name": meal.name,
                 "categories": []
             }
-            
+
             for category in meal.categories:
                 category_data = {
                     "name": category.name,
                     "dishes": [dish.name for dish in category.dishes]
                 }
                 meal_data["categories"].append(category_data)
-            
+
             menu_data["meals"].append(meal_data)
-        
+
         # Convertir en JSON et calculer le hash
         menu_json = dumps(menu_data, sort_keys=True, ensure_ascii=False)
         return hashlib.sha256(menu_json.encode('utf-8')).hexdigest()
@@ -275,18 +276,18 @@ class Worker:
                 for menu in menus:
                     # Calculer le hash du menu
                     menu_hash = self.compute_menu_hash(menu)
-                    
+
                     # Vérifier si le menu existe déjà et si son hash a changé
                     existing_hash = await connection.fetchval(
                         "SELECT MENU_HASH FROM MENU WHERE MID = $1",
                         menu.id,
                     )
-                    
+
                     # Si le hash n'a pas changé, on peut ignorer ce menu
                     if existing_hash == menu_hash:
                         self.logger.debug(f"Menu {menu.id} inchangé, skip")
                         continue
-                    
+
                     # Si le menu existe mais le hash a changé, on doit supprimer l'ancien contenu
                     if existing_hash is not None:
                         self.logger.debug(f"Menu {menu.id} modifié, mise à jour nécessaire")
@@ -302,7 +303,7 @@ class Worker:
                             """,
                             menu.id,
                         )
-                        
+
                         await connection.execute(
                             """
                                 DELETE FROM CATEGORIE 
@@ -312,12 +313,12 @@ class Worker:
                             """,
                             menu.id,
                         )
-                        
+
                         await connection.execute(
                             "DELETE FROM REPAS WHERE MID = $1",
                             menu.id,
                         )
-                    
+
                     # Insérer ou mettre à jour le menu avec le nouveau hash
                     await connection.execute(
                         """
@@ -376,14 +377,21 @@ class Worker:
                                     )
                                     # Ignore ce plat
                                     continue
-                                
+
+                                if not dish.name.strip():
+                                    self.logger.critical(
+                                        f"Le plat a un nom vide. Debug: [RID: {ru.id}, RPID: {rpid}, CATID: {catid}]"
+                                    )
+                                    # Ignore ce plat
+                                    continue
+
                                 # Essayer d'insérer le plat, ou récupérer l'ID s'il existe déjà
                                 # Note: PLAT n'a pas de contrainte d'unicité sur LIBELLE, donc on vérifie d'abord
                                 platid = await connection.fetchval(
                                     "SELECT PLATID FROM PLAT WHERE LIBELLE = $1 LIMIT 1",
                                     dish.name,
                                 )
-                                
+
                                 if platid is None:
                                     # Utiliser RETURNING pour obtenir l'ID atomiquement
                                     platid = await connection.fetchval(
