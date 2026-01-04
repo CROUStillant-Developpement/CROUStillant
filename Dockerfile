@@ -15,4 +15,4 @@ RUN apk del gcc musl-dev python3-dev libffi-dev cargo make
 
 RUN crontab crontab
 
-CMD ["crond", "-f"]
+CMD ["crond", "-f", "-L", "/dev/stdout"]
