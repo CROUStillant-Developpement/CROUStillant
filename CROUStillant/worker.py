@@ -288,36 +288,33 @@ class Worker:
                         self.logger.debug(f"Menu {menu.id} inchangé, skip")
                         continue
 
-                    # Si le menu existe mais le hash a changé, on doit supprimer l'ancien contenu
-                    if existing_hash is not None:
-                        self.logger.debug(f"Menu {menu.id} modifié, mise à jour nécessaire")
-                        # Supprimer les anciennes données du menu
-                        await connection.execute(
-                            """
-                                DELETE FROM COMPOSITION 
-                                WHERE CATID IN (
-                                    SELECT CATID FROM CATEGORIE WHERE RPID IN (
-                                        SELECT RPID FROM REPAS WHERE MID = $1
-                                    )
-                                )
-                            """,
-                            menu.id,
-                        )
-
-                        await connection.execute(
-                            """
-                                DELETE FROM CATEGORIE 
-                                WHERE RPID IN (
+                    # Si le menu a changé ou n'existe pas, supprimer les anciens enregistrements liés
+                    await connection.execute(
+                        """
+                            DELETE FROM COMPOSITION 
+                            WHERE CATID IN (
+                                SELECT CATID FROM CATEGORIE WHERE RPID IN (
                                     SELECT RPID FROM REPAS WHERE MID = $1
                                 )
-                            """,
-                            menu.id,
-                        )
+                            )
+                        """,
+                        menu.id,
+                    )
 
-                        await connection.execute(
-                            "DELETE FROM REPAS WHERE MID = $1",
-                            menu.id,
-                        )
+                    await connection.execute(
+                        """
+                            DELETE FROM CATEGORIE 
+                            WHERE RPID IN (
+                                SELECT RPID FROM REPAS WHERE MID = $1
+                            )
+                        """,
+                        menu.id,
+                    )
+
+                    await connection.execute(
+                        "DELETE FROM REPAS WHERE MID = $1",
+                        menu.id,
+                    )
 
                     # Insérer ou mettre à jour le menu avec le nouveau hash
                     await connection.execute(
