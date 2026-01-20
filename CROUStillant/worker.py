@@ -52,14 +52,20 @@ class Worker:
 
         return dict(stats)
 
-    async def _retry_region_get(self, retries: int = 3, delay: float = 1.0):
+    async def _retry_region_get(self, retries: int = 3, delay: float = 1.0) -> list[Region]:
         """
-        Retry wrapper for self.client.region.get()
+        Retry wrapper for self.client.region.get().
+
+        This method logs each attempt, increments the request counter on
+        successful calls, and retries the request a limited number of times
+        before propagating the last encountered exception.
 
         :param retries: Number of attempts
         :type retries: int
         :param delay: Delay between attempts (seconds)
         :type delay: float
+        :return: List of regions
+        :rtype: list[Region]
         """
         last_exception = None
 
