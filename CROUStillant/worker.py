@@ -379,7 +379,7 @@ class Worker:
             raise last_exception
 
         raise RuntimeError(
-            "Failed to load regions after retries, but no exception was captured"
+            "Failed to load menus after retries, but no exception was captured"
         )
 
     async def loadMenus(self, region: Region, ru: RU) -> None:
