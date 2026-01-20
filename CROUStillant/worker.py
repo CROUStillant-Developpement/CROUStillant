@@ -321,17 +321,23 @@ class Worker:
 
     async def _retry_menu_get(self, region_id: int, ru_id: int, retries: int = 3, delay: float = 1.0):
         """
-        Docstring for _retry_menu_get
-        
-        :param self: Description
-        :param region_id: Description
+        Récupère les menus d'un restaurant avec une logique de nouvelle tentative
+        en cas d'échec de l'appel à ``self.client.menu.get``.
+
+        Cette méthode encapsule l'appel à l'API des menus avec un nombre maximal
+        de tentatives configurables et un délai croissant entre chaque tentative.
+
+        :param region_id: Identifiant de la région du restaurant cible.
         :type region_id: int
-        :param ru_id: Description
+        :param ru_id: Identifiant du restaurant universitaire pour lequel charger les menus.
         :type ru_id: int
-        :param retries: Description
+        :param retries: Nombre maximal de tentatives avant d'abandonner.
         :type retries: int
-        :param delay: Description
+        :param delay: Délai de base (en secondes) avant la prochaine tentative, multiplié par le numéro de la tentative.
         :type delay: float
+        :return: Liste des menus récupérés pour le restaurant.
+        :rtype: list[Menu]
+        :raises Exception: Relève la dernière exception rencontrée si toutes les tentatives échouent.
         """
         last_exception = None
 
