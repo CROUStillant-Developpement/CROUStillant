@@ -84,7 +84,13 @@ class Worker:
         self.logger.error(
             f"Failed to load regions after {retries} attempts"
         )
-        raise last_exception
+
+        if last_exception is not None:
+            raise last_exception
+
+        raise RuntimeError(
+            "Failed to load regions after retries, but no exception was captured"
+        )
 
     async def loadRegions(self) -> list[Region]:
         """
@@ -150,7 +156,13 @@ class Worker:
         self.logger.error(
             f"Failed to load restaurants for region {region_id} after {retries} attempts"
         )
-        raise last_exception
+
+        if last_exception is not None:
+            raise last_exception
+
+        raise RuntimeError(
+            "Failed to load regions after retries, but no exception was captured"
+        )
 
     async def loadRestaurants(self, regions: list[Region]) -> None:
         """
@@ -362,7 +374,13 @@ class Worker:
         self.logger.error(
             f"Failed to load menus for restaurant {ru_id} in region {region_id} after {retries} attempts"
         )
-        raise last_exception
+
+        if last_exception is not None:
+            raise last_exception
+
+        raise RuntimeError(
+            "Failed to load regions after retries, but no exception was captured"
+        )
 
     async def loadMenus(self, region: Region, ru: RU) -> None:
         """
