@@ -1,4 +1,5 @@
 import hashlib
+import asyncio
 
 from CrousPy import Crous, Region, RU, Menu
 from CROUStillant.logger import Logger
@@ -51,6 +52,40 @@ class Worker:
 
         return dict(stats)
 
+    async def _retry_region_get(self, retries: int = 3, delay: float = 1.0):
+        """
+        Retry wrapper for self.client.region.get()
+
+        :param retries: Number of attempts
+        :type retries: int
+        :param delay: Delay between attempts (seconds)
+        :type delay: float
+        """
+        last_exception = None
+
+        for attempt in range(1, retries + 1):
+            try:
+                self.logger.debug(
+                    f"GET /regions (attempt {attempt}/{retries})"
+                )
+                restaurants = await self.client.region.get()
+                self.requests += 1
+                return restaurants
+            except Exception as e:
+                last_exception = e
+                self.logger.warning(
+                    f"Failed to load regions "
+                    f"(attempt {attempt}/{retries}): {e}"
+                )
+
+                if attempt < retries:
+                    await asyncio.sleep(delay * attempt)
+
+        self.logger.error(
+            f"Failed to load regions after {retries} attempts"
+        )
+        raise last_exception
+
     async def loadRegions(self) -> list[Region]:
         """
         Charge les régions et les enregistre dans la base de données.
@@ -60,9 +95,7 @@ class Worker:
         """
         self.logger.info("Chargement des régions...")
 
-        self.logger.debug("GET /regions")
-        regions = await self.client.region.get()
-        self.requests += 1
+        regions = await self._retry_region_get()
 
         self.logger.info(f"{len(regions)} régions chargées !")
 
@@ -83,6 +116,42 @@ class Worker:
 
         return regions
 
+    async def _retry_ru_get(self, region_id: int, retries: int = 3, delay: float = 1.0):
+        """
+        Retry wrapper for self.client.ru.get()
+
+        :param region_id: Region ID
+        :type region_id: int
+        :param retries: Number of attempts
+        :type retries: int
+        :param delay: Delay between attempts (seconds)
+        :type delay: float
+        """
+        last_exception = None
+
+        for attempt in range(1, retries + 1):
+            try:
+                self.logger.debug(
+                    f"GET /regions/{region_id}/restaurants (attempt {attempt}/{retries})"
+                )
+                restaurants = await self.client.ru.get(region_id)
+                self.requests += 1
+                return restaurants
+            except Exception as e:
+                last_exception = e
+                self.logger.warning(
+                    f"Failed to load restaurants for region {region_id} "
+                    f"(attempt {attempt}/{retries}): {e}"
+                )
+
+                if attempt < retries:
+                    await asyncio.sleep(delay * attempt)
+
+        self.logger.error(
+            f"Failed to load restaurants for region {region_id} after {retries} attempts"
+        )
+        raise last_exception
+
     async def loadRestaurants(self, regions: list[Region]) -> None:
         """
         Charge les restaurants et les enregistre dans la base de données.
@@ -100,9 +169,7 @@ class Worker:
                     f"Chargement des restaurants pour la région {region.name}..."
                 )
 
-                self.logger.debug(f"GET /regions/{region.id}/restaurants")
-                restaurants = await self.client.ru.get(region.id)
-                self.requests += 1
+                restaurants = await self._retry_ru_get(region.id)
 
                 self.logger.info(
                     f"{len(restaurants)} restaurants chargés pour la région {region.name} !"
@@ -252,6 +319,45 @@ class Worker:
         menu_json = dumps(menu_data, sort_keys=True, ensure_ascii=False)
         return hashlib.sha256(menu_json.encode('utf-8')).hexdigest()
 
+    async def _retry_menu_get(self, region_id: int, ru_id: int, retries: int = 3, delay: float = 1.0):
+        """
+        Docstring for _retry_menu_get
+        
+        :param self: Description
+        :param region_id: Description
+        :type region_id: int
+        :param ru_id: Description
+        :type ru_id: int
+        :param retries: Description
+        :type retries: int
+        :param delay: Description
+        :type delay: float
+        """
+        last_exception = None
+
+        for attempt in range(1, retries + 1):
+            try:
+                self.logger.debug(
+                    f"GET /regions/{region_id}/restaurants/{ru_id}/menus (attempt {attempt}/{retries})"
+                )
+                menus = await self.client.menu.get(region_id, ru_id)
+                self.requests += 1
+                return menus
+            except Exception as e:
+                last_exception = e
+                self.logger.warning(
+                    f"Failed to load menus for restaurant {ru_id} in region {region_id} "
+                    f"(attempt {attempt}/{retries}): {e}"
+                )
+
+                if attempt < retries:
+                    await asyncio.sleep(delay * attempt)
+
+        self.logger.error(
+            f"Failed to load menus for restaurant {ru_id} in region {region_id} after {retries} attempts"
+        )
+        raise last_exception
+
     async def loadMenus(self, region: Region, ru: RU) -> None:
         """
         Charge les menus et les enregistre dans la base de données.
@@ -263,9 +369,7 @@ class Worker:
         """
         self.logger.info(f"Chargement des menus pour le restaurant {ru.title}...")
 
-        self.logger.debug(f"GET /regions/{region.id}/restaurants/{ru.id}/menus")
-        menus = await self.client.menu.get(region.id, ru.id)
-        self.requests += 1
+        menus = await self._retry_menu_get(region.id, ru.id)
 
         self.logger.info(f"{len(menus)} menus chargés pour le restaurant {ru.title} !")
 
@@ -285,6 +389,16 @@ class Worker:
 
                     # Si le hash n'a pas changé, on peut ignorer ce menu
                     if existing_hash == menu_hash:
+                        await connection.execute(
+                            """
+                            UPDATE MENU
+                            SET LAST_CHECKED = $2
+                            WHERE MID = $1
+                            """,
+                            menu.id,
+                            datetime.now(),
+                        )
+   
                         self.logger.debug(f"Menu {menu.id} inchangé, skip")
                         continue
 
