@@ -161,7 +161,7 @@ class Worker:
             raise last_exception
 
         raise RuntimeError(
-            "Failed to load regions after retries, but no exception was captured"
+            "Failed to load restaurants after retries, but no exception was captured"
         )
 
     async def loadRestaurants(self, regions: list[Region]) -> None:
