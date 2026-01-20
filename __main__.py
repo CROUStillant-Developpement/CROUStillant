@@ -171,7 +171,20 @@ Tâche **`#{taskId}`**
 
         return
 
-    await worker.loadRestaurants(regions=regions)
+    try:
+        await worker.loadRestaurants(regions=regions)
+    except Exception as e:
+        logger.error(f"Erreur lors du chargement des restaurants : {e}")
+
+        await sendWebhook(
+            webhook=webhook,
+            embed=Embed(
+                title="CROUStillant",
+                description="Erreur lors du chargement des restaurants. L'API du CROUS est indisponible ?",
+                color=int(environ["EMBED_COLOR"], base=16),
+                timestamp=datetime.now(),
+            ),
+        )
 
     logger.info("Données chargées !")
 
