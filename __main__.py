@@ -171,7 +171,47 @@ Tâche **`#{taskId}`**
 
         return
 
-    await worker.loadRestaurants(regions=regions)
+    try:
+        await worker.loadRestaurants(regions=regions)
+    except Exception as e:
+        logger.error(f"Erreur lors du chargement des restaurants : {e}")
+
+        await sendWebhook(
+            webhook=webhook,
+            embed=Embed(
+                title="CROUStillant",
+                description="Erreur lors du chargement des restaurants. L'API du CROUS est indisponible ?",
+                color=int(environ["EMBED_COLOR"], base=16),
+                timestamp=datetime.now(),
+            ),
+        )
+
+        async with pool.acquire() as connection:
+            connection: Connection
+
+            await connection.execute(
+                """
+                    UPDATE TACHE
+                    SET FIN = $1, FIN_REGIONS = $2, FIN_RESTAURANTS = $3, FIN_TYPES_RESTAURANTS = $4, FIN_MENUS = $5, 
+                        FIN_REPAS = $6, FIN_CATEGORIES = $7, FIN_PLATS = $8, FIN_COMPOSITIONS = $9, FIN_ACTIFS = $10,
+                        REQUETES = $11
+                    WHERE ID = $12;
+                """,
+                datetime.now(),
+                stats["regions"],
+                stats["restaurants"],
+                stats["types_restaurants"],
+                stats["menus"],
+                stats["repas"],
+                stats["categories"],
+                stats["plats"],
+                stats["compositions"],
+                len(restaurants),
+                0,
+                taskId,
+            )
+
+        return
 
     logger.info("Données chargées !")
 
