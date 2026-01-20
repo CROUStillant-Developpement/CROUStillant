@@ -68,9 +68,9 @@ class Worker:
                 self.logger.debug(
                     f"GET /regions (attempt {attempt}/{retries})"
                 )
-                restaurants = await self.client.region.get()
+                regions = await self.client.region.get()
                 self.requests += 1
-                return restaurants
+                return regions
             except Exception as e:
                 last_exception = e
                 self.logger.warning(
