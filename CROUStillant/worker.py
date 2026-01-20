@@ -138,6 +138,8 @@ class Worker:
         :type retries: int
         :param delay: Delay between attempts (seconds)
         :type delay: float
+        :return: List of restaurants for the specified region
+        :rtype: list[RU]
         """
         last_exception = None
 
