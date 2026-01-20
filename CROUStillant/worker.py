@@ -404,7 +404,6 @@ class Worker:
                             menu.id,
                             datetime.now(),
                         )
-   
                         self.logger.debug(f"Menu {menu.id} inchangé, skip")
                         continue
 
