@@ -3,11 +3,13 @@ import asyncio
 from CrousPy import Crous
 from CROUStillant.logger import Logger
 from CROUStillant.worker import Worker
+from CROUStillant.views import WorkerView, ErrorView
 from asyncpg import create_pool, Connection
 from aiohttp import ClientSession
 from os import environ
 from dotenv import load_dotenv
-from discord import Embed, Webhook
+from discord import Webhook
+from discord.ui import LayoutView
 from datetime import datetime
 from pytz import timezone
 
@@ -91,40 +93,37 @@ async def main():
         worker.taskId = taskId
 
     # Startup message
-    embed = Embed(
-        title="CROUStillant",
-        description="Tâche de fond démarrée ! Chargement des données...",
-        color=int(environ["EMBED_COLOR"], base=16),
-        timestamp=datetime.now(),
-    )
-    embed.add_field(
-        name="Statistiques",
-        value=f"""
-Nombre de régions : `{stats["regions"]:,d}`
-Nombre de restaurants : `{stats["restaurants"]:,d}`
-Nombre de types de restauration : `{stats["types_restaurants"]:,d}`
-Nombre de menus : `{stats["menus"]:,d}`
-Nombre de repas : `{stats["repas"]:,d}`
-Nombre de catégories : `{stats["categories"]:,d}`
-Nombre de plats : `{stats["plats"]:,d}`
-Nombre de compositions : `{stats["compositions"]:,d}`
-Nombre de restaurants actifs : `{len(restaurants):,d}`
-        """,
-    )
-    embed.add_field(
-        name="Debug",
-        value=f"""
-Tâche **`#{taskId}`**
-        """,
-        inline=False,
-    )
-    embed.set_thumbnail(url=environ["THUMBNAIL_URL"])
-    embed.set_image(url=environ["IMAGE_URL"])
-    embed.set_footer(
-        text=f"CROUStillant Développement © 2022 - {year} | Tous droits réservés."
+    view = WorkerView(
+        content="## Tâche de fond démarrée ! Chargement des données...\n\nTâche **`#{taskId}`**".format(
+            taskId=taskId,
+        ),
+        stats="""
+Nombre de régions : `{regions:,d}`
+Nombre de restaurants : `{restaurants:,d}`
+Nombre de types de restauration : `{types_restaurants:,d}`
+Nombre de menus : `{menus:,d}`
+Nombre de repas : `{repas:,d}`
+Nombre de catégories : `{categories:,d}`
+Nombre de plats : `{plats:,d}`
+Nombre de compositions : `{compositions:,d}`
+Nombre de restaurants actifs : `{actifs:,d}`
+        """.format(
+            regions=stats["regions"],
+            restaurants=stats["restaurants"],
+            types_restaurants=stats["types_restaurants"],
+            menus=stats["menus"],
+            repas=stats["repas"],
+            categories=stats["categories"],
+            plats=stats["plats"],
+            compositions=stats["compositions"],
+            actifs=len(restaurants),
+        ),
+        thumbnail_url=environ["THUMBNAIL_URL"],
+        banner_url=environ["IMAGE_URL"],
+        footer_text="CROUStillant Développement © 2022 - {year} | Tous droits réservés.".format(year=year),
     )
 
-    await sendWebhook(webhook=webhook, embed=embed)
+    await sendWebhook(webhook=webhook, view=view)
 
     # Chargement des données
     logger.info("Chargement des données...")
@@ -134,14 +133,18 @@ Tâche **`#{taskId}`**
     except Exception as e:
         logger.error(f"Erreur lors du chargement des régions : {e}")
 
+        view = ErrorView(
+            content="## Erreur lors du chargement des régions. L'API du CROUS est indisponible ?\n\nTâche **`#{taskId}`**".format(
+                taskId=taskId,
+            ),
+            thumbnail_url=environ["THUMBNAIL_URL"],
+            banner_url=environ["IMAGE_URL"],
+            footer_text="CROUStillant Développement © 2022 - {year} | Tous droits réservés.".format(year=year),
+        )
+
         await sendWebhook(
             webhook=webhook,
-            embed=Embed(
-                title="CROUStillant",
-                description="Erreur lors du chargement des régions. L'API du CROUS est indisponible ?",
-                color=int(environ["EMBED_COLOR"], base=16),
-                timestamp=datetime.now(),
-            ),
+            view=view,
         )
 
         async with pool.acquire() as connection:
@@ -176,14 +179,18 @@ Tâche **`#{taskId}`**
     except Exception as e:
         logger.error(f"Erreur lors du chargement des restaurants : {e}")
 
+        view = ErrorView(
+            content="## Erreur lors du chargement des restaurants. L'API du CROUS est indisponible ?\n\nTâche **`#{taskId}`**".format(
+                taskId=taskId,
+            ),
+            thumbnail_url=environ["THUMBNAIL_URL"],
+            banner_url=environ["IMAGE_URL"],
+            footer_text="CROUStillant Développement © 2022 - {year} | Tous droits réservés.".format(year=year),
+        )
+
         await sendWebhook(
             webhook=webhook,
-            embed=Embed(
-                title="CROUStillant",
-                description="Erreur lors du chargement des restaurants. L'API du CROUS est indisponible ?",
-                color=int(environ["EMBED_COLOR"], base=16),
-                timestamp=datetime.now(),
-            ),
+            view=view,
         )
 
         async with pool.acquire() as connection:
@@ -271,52 +278,49 @@ Tâche **`#{taskId}`**
         )
 
     # Envoi du message de fin
-    embed = Embed(
-        title="CROUStillant",
-        description=f"Tâche de fond terminée ! Données chargées.\nTemps écoulé : `{round(elapsed.total_seconds(), 2)}` secondes.",
-        color=int(environ["EMBED_COLOR"], base=16),
-        timestamp=datetime.now(),
-    )
-    embed.add_field(
-        name="Statistiques",
-        value=f"""
-Nombre de régions : `{stats["regions"]:,d}`
-Nombre de restaurants : `{stats["restaurants"]:,d}`
-Nombre de types de restauration : `{stats["types_restaurants"]:,d}`
-Nombre de menus : `{stats["menus"]:,d}`
-Nombre de repas : `{stats["repas"]:,d}`
-Nombre de catégories : `{stats["categories"]:,d}`
-Nombre de plats : `{stats["plats"]:,d}`
-Nombre de compositions : `{stats["compositions"]:,d}`
-Nombre de restaurants actifs : `{len(restaurants):,d}`
-        """,
-    )
-    embed.add_field(
-        name="Debug",
-        value=f"""
-Tâche **`#{taskId}`**
-Nombre de requêtes : `{worker.requests:,d}` (`{round(worker.requests / elapsed.total_seconds(), 2)}` par seconde)
-        """,
-        inline=False,
-    )
-    embed.set_thumbnail(url=environ["THUMBNAIL_URL"])
-    embed.set_image(url=environ["IMAGE_URL"])
-    embed.set_footer(
-        text=f"CROUStillant Développement © 2022 - {year} | Tous droits réservés."
+    view = WorkerView(
+        content="## Tâche de fond terminée ! Données chargées.\nTemps écoulé : `{elapsed}` secondes.\n\nTâche **`#{taskId}`**".format(
+            elapsed=round(elapsed.total_seconds(), 2),
+            taskId=taskId,
+        ),
+        stats="""
+Nombre de régions : `{regions:,d}`
+Nombre de restaurants : `{restaurants:,d}`
+Nombre de types de restauration : `{types_restaurants:,d}`
+Nombre de menus : `{menus:,d}`
+Nombre de repas : `{repas:,d}`
+Nombre de catégories : `{categories:,d}`
+Nombre de plats : `{plats:,d}`
+Nombre de compositions : `{compositions:,d}`
+Nombre de restaurants actifs : `{actifs:,d}`
+        """.format(
+            regions=stats["regions"],
+            restaurants=stats["restaurants"],
+            types_restaurants=stats["types_restaurants"],
+            menus=stats["menus"],
+            repas=stats["repas"],
+            categories=stats["categories"],
+            plats=stats["plats"],
+            compositions=stats["compositions"],
+            actifs=len(restaurants),
+        ),
+        thumbnail_url=environ["THUMBNAIL_URL"],
+        banner_url=environ["IMAGE_URL"],
+        footer_text="CROUStillant Développement © 2022 - {year} | Tous droits réservés.".format(year=year),
     )
 
-    await sendWebhook(webhook=webhook, embed=embed)
+    await sendWebhook(webhook=webhook, view=view)
 
     # Fermeture de la session et de la connexion à la base de données
     await pool.close()
     await session.close()
 
 
-async def sendWebhook(webhook: Webhook, embed: Embed) -> None:
+async def sendWebhook(webhook: Webhook, view: LayoutView) -> None:
     """
     Fonction pour envoyer un message sur un webhook Discord
     """
-    await webhook.send(embed=embed)
+    await webhook.send(view=view)
 
 
 if __name__ == "__main__":
