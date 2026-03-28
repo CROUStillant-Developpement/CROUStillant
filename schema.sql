@@ -217,7 +217,7 @@ $$;
 
 
 -- Traitement des plats (résultat du classifier : classification + libellé nettoyé)
--- CLASSIFICATION :  1 = plat réel, -1 = pas un plat (métadonnée, prix, horaire...)
+-- CLASSIFICATION :  1 = plat réel, 0 = pas un plat (métadonnée, prix, horaire...)
 -- LIBELLE_NET    :  libellé nettoyé (parenthèses supprimées), NULL si CLASSIFICATION = -1
 CREATE TABLE PLAT_TRAITEMENT(
     PLATID INT,
