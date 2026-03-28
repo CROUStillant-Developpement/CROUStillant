@@ -2,7 +2,7 @@
     *  CROUStillant - schema.sql
     *  Created by: CROUStillant Développement
     *  Created on: 13/11/2023
-    *  Updated on: 20/01/2026
+    *  Updated on: 28/03/2026
     *  Description: SQL database scheme for the CROUStillant project
 ***************************************************************/
 
@@ -216,6 +216,119 @@ END;
 $$;
 
 
+-- Traitement des plats (résultat du classifier : classification + libellé nettoyé)
+-- CLASSIFICATION :  1 = plat réel, 0 = pas un plat (métadonnée, prix, horaire...)
+-- LIBELLE_NET    :  libellé nettoyé (parenthèses supprimées), NULL si CLASSIFICATION = -1
+CREATE TABLE PLAT_TRAITEMENT(
+    PLATID INT,
+    LIBELLE_NET VARCHAR(500),
+    CLASSIFICATION SMALLINT NOT NULL,
+    CONFIDENCE FLOAT NOT NULL,
+    TRAITE_LE TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT PK_PLAT_TRAITEMENT PRIMARY KEY (PLATID),
+    CONSTRAINT FK_PLAT_TRAITEMENT_PLAT FOREIGN KEY (PLATID) REFERENCES PLAT(PLATID),
+    CONSTRAINT CK_PLAT_TRAITEMENT_LABEL CHECK (CLASSIFICATION IN (0, 1)),
+    CONSTRAINT CK_PLAT_TRAITEMENT_CONFIDENCE CHECK (CONFIDENCE BETWEEN 0 AND 1),
+    TYPE_PLAT VARCHAR(20),
+    CONSTRAINT CK_PLAT_TRAITEMENT_LIBELLE_NET CHECK (
+        (CLASSIFICATION = 1 AND LIBELLE_NET IS NOT NULL) OR
+        (CLASSIFICATION = 0 AND LIBELLE_NET IS NULL)
+    ),
+    CONSTRAINT CK_PLAT_TRAITEMENT_TYPE_PLAT CHECK (
+        TYPE_PLAT IS NULL OR (
+            CLASSIFICATION = 1 AND TYPE_PLAT IN ('ENTREE', 'PLAT', 'DESSERT', 'BOISSON', 'FROMAGE', 'AUTRE')
+        )
+    )
+) PARTITION BY HASH(PLATID);
+
+-- Création des partitions pour la table PLAT_TRAITEMENT
+DO
+$$
+BEGIN
+    FOR i IN 0..29 LOOP
+        EXECUTE format('CREATE TABLE plat_traitement_partition_%s PARTITION OF PLAT_TRAITEMENT FOR VALUES WITH (modulus 30, remainder %s)', i, i);
+    END LOOP;
+END;
+$$;
+
+
+-- Référentiel des allergènes (14 allergènes majeurs UE - règlement EU 1169/2011)
+CREATE TABLE ALLERGENE(
+    IDALLERGENE SERIAL PRIMARY KEY,
+    CODE VARCHAR(50) UNIQUE NOT NULL,
+    LIBELLE VARCHAR(255) NOT NULL
+);
+
+INSERT INTO ALLERGENE (CODE, LIBELLE) VALUES
+    ('GLUTEN',        'Céréales contenant du gluten'),
+    ('CRUSTACES',     'Crustacés'),
+    ('OEUFS',         'Œufs'),
+    ('POISSONS',      'Poissons'),
+    ('ARACHIDES',     'Arachides'),
+    ('SOJA',          'Soja'),
+    ('LAIT',          'Lait'),
+    ('FRUITS_A_COQUE','Fruits à coque'),
+    ('CELERI',        'Céleri'),
+    ('MOUTARDE',      'Moutarde'),
+    ('SESAME',        'Graines de sésame'),
+    ('SULFITES',      'Dioxyde de soufre et sulfites'),
+    ('LUPIN',         'Lupin'),
+    ('MOLLUSQUES',    'Mollusques');
+
+
+-- Allergènes d'un plat
+CREATE TABLE PLAT_ALLERGENE(
+    PLATID INT,
+    IDALLERGENE INT,
+    CERTITUDE VARCHAR(20) NOT NULL,
+    CONSTRAINT PK_PLAT_ALLERGENE PRIMARY KEY (PLATID, IDALLERGENE),
+    CONSTRAINT FK_PLAT_ALLERGENE_PLAT FOREIGN KEY (PLATID) REFERENCES PLAT(PLATID),
+    CONSTRAINT FK_PLAT_ALLERGENE_ALLERGENE FOREIGN KEY (IDALLERGENE) REFERENCES ALLERGENE(IDALLERGENE),
+    CONSTRAINT CK_PLAT_ALLERGENE_CERTITUDE CHECK (CERTITUDE IN ('CONTIENT', 'PEUT_CONTENIR'))
+) PARTITION BY HASH(PLATID, IDALLERGENE);
+
+-- Création des partitions pour la table PLAT_ALLERGENE
+DO
+$$
+BEGIN
+    FOR i IN 0..29 LOOP
+        EXECUTE format('CREATE TABLE plat_allergene_partition_%s PARTITION OF PLAT_ALLERGENE FOR VALUES WITH (modulus 30, remainder %s)', i, i);
+    END LOOP;
+END;
+$$;
+
+
+-- Valeurs nutritionnelles d'un plat (nullable car données pas toujours disponibles)
+CREATE TABLE VALEURS_NUTRITIONNELLES(
+    PLATID INT,
+    ENERGIE_KJ FLOAT,
+    ENERGIE_KCAL FLOAT,
+    MATIERES_GRASSES FLOAT,
+    ACIDES_GRAS_SATURES FLOAT,
+    GLUCIDES FLOAT,
+    SUCRES FLOAT,
+    FIBRES FLOAT,
+    PROTEINES FLOAT,
+    SEL FLOAT,
+    SOURCE VARCHAR(255),
+    MISE_A_JOUR TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT PK_VALEURS_NUTRITIONNELLES PRIMARY KEY (PLATID),
+    CONSTRAINT FK_VALEURS_NUTRITIONNELLES_PLAT FOREIGN KEY (PLATID) REFERENCES PLAT(PLATID),
+    CONSTRAINT CK_VALEURS_NUTRITIONNELLES_KJ CHECK (ENERGIE_KJ IS NULL OR ENERGIE_KJ >= 0),
+    CONSTRAINT CK_VALEURS_NUTRITIONNELLES_KCAL CHECK (ENERGIE_KCAL IS NULL OR ENERGIE_KCAL >= 0)
+) PARTITION BY HASH(PLATID);
+
+-- Création des partitions pour la table VALEURS_NUTRITIONNELLES
+DO
+$$
+BEGIN
+    FOR i IN 0..29 LOOP
+        EXECUTE format('CREATE TABLE valeurs_nutritionnelles_partition_%s PARTITION OF VALEURS_NUTRITIONNELLES FOR VALUES WITH (modulus 30, remainder %s)', i, i);
+    END LOOP;
+END;
+$$;
+
+
 -- Tâche
 CREATE TABLE TACHE(
     ID SERIAL PRIMARY KEY,
@@ -346,6 +459,10 @@ CREATE INDEX idx_bucket_key ON BUCKET (KEY);
 CREATE INDEX idx_requests_logs_key ON REQUESTS_LOGS (KEY);
 CREATE INDEX idx_requests_logs_created_at ON REQUESTS_LOGS (CREATED_AT);
 CREATE INDEX idx_geo_data_region ON GEO_DATA (REGION);
+CREATE INDEX idx_plat_traitement_label ON PLAT_TRAITEMENT (CLASSIFICATION);
+CREATE INDEX idx_plat_traitement_traite_le ON PLAT_TRAITEMENT (TRAITE_LE);
+CREATE INDEX idx_plat_allergene_allergene ON PLAT_ALLERGENE (IDALLERGENE);
+CREATE INDEX idx_valeurs_nutritionnelles_kcal ON VALEURS_NUTRITIONNELLES (ENERGIE_KCAL);
 
 
 -- Listener
