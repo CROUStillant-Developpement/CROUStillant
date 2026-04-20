@@ -431,7 +431,7 @@ CREATE TABLE REQUESTS_LOGS(
 DO
 $$
 DECLARE
-    start_date DATE := '2025-03-01';
+    start_date DATE := '2025-04-01';
     partition_date DATE;
     partition_name TEXT;
 BEGIN
