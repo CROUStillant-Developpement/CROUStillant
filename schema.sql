@@ -2,7 +2,7 @@
     *  CROUStillant - schema.sql
     *  Created by: CROUStillant Développement
     *  Created on: 13/11/2023
-    *  Updated on: 28/03/2026
+    *  Updated on: 20/04/2026
     *  Description: SQL database scheme for the CROUStillant project
 ***************************************************************/
 
@@ -68,7 +68,7 @@ CREATE TABLE PARAMETRES(
     CONSTRAINT PK_PARAMETRES PRIMARY KEY (GUILD_ID, RID),
     CONSTRAINT FK_PARAMETRES_RESTAURANT FOREIGN KEY (RID) REFERENCES RESTAURANT(RID),
     CONSTRAINT CK_PARAMETRES_THEME CHECK (THEME IN ('light', 'dark', 'purple')),
-    CONSTRAINT CK_PARAMETRES_REPAS CHECK (REPAS IN ('matin', 'midi', 'soir')
+    CONSTRAINT CK_PARAMETRES_REPAS CHECK (REPAS IN ('matin', 'midi', 'soir'))
 );
 
 
@@ -86,7 +86,7 @@ INSERT INTO TYPE_LOG (IDTPL, LIBELLE) VALUES  (
     (4, 'Impossible de modifier le menu'),
     (5, 'Paramètres modifiés'),
     (6, 'Paramètres supprimés'),
-    (7, 'Suppression automatique des paramètres')
+    (7, 'Suppression automatique des paramètres'),
     (8, 'Serveur ajouté'),
     (9, 'Serveur supprimé')
 );
@@ -406,9 +406,9 @@ CREATE TABLE BUCKET(
 );
 
 
--- Sauvegarde des requêtes
+-- Sauvegarde des requêtes (partitionnée par mois via CREATED_AT)
 CREATE TABLE REQUESTS_LOGS(
-    ID UUID PRIMARY KEY,
+    ID UUID NOT NULL,
     KEY VARCHAR(50),
     METHOD VARCHAR(500) NOT NULL,
     PATH TEXT NOT NULL,
@@ -423,18 +423,33 @@ CREATE TABLE REQUESTS_LOGS(
     PROCESS_TIME INT NOT NULL,
     API_VERSION VARCHAR(50) NOT NULL,
     hashed_ip VARCHAR(40) NOT NULL,
-    CREATED_AT TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-) PARTITION BY HASH(ID);
+    CREATED_AT TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (ID, CREATED_AT)
+) PARTITION BY RANGE (CREATED_AT);
 
--- Création des partitions pour la table REQUESTS_LOGS
+-- Création des partitions mensuelles (24 mois à partir d'avril 2025)
 DO
 $$
+DECLARE
+    start_date DATE := '2025-03-01';
+    partition_date DATE;
+    partition_name TEXT;
 BEGIN
-    FOR i IN 0..29 LOOP
-        EXECUTE format('CREATE TABLE requests_logs_partition_%s PARTITION OF REQUESTS_LOGS FOR VALUES WITH (modulus 30, remainder %s)', i, i);
+    FOR i IN 0..23 LOOP
+        partition_date := start_date + (i * INTERVAL '1 month');
+        partition_name := 'requests_logs_' || TO_CHAR(partition_date, 'YYYY_MM');
+        EXECUTE format(
+            'CREATE TABLE IF NOT EXISTS %I PARTITION OF REQUESTS_LOGS FOR VALUES FROM (%L) TO (%L)',
+            partition_name,
+            partition_date,
+            partition_date + INTERVAL '1 month'
+        );
     END LOOP;
 END;
 $$;
+
+-- Partition par défaut pour les données hors plage
+CREATE TABLE requests_logs_default PARTITION OF REQUESTS_LOGS DEFAULT;
 
 
 -- Données géographiques
