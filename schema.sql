@@ -422,7 +422,7 @@ CREATE TABLE REQUESTS_LOGS(
     RATELIMIT_BUCKET BIGINT NOT NULL,
     PROCESS_TIME INT NOT NULL,
     API_VERSION VARCHAR(50) NOT NULL,
-    hashed_ip VARCHAR(40) NOT NULL,
+    hashed_ip VARCHAR(40),
     CREATED_AT TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (ID, CREATED_AT)
 ) PARTITION BY RANGE (CREATED_AT);
@@ -431,18 +431,18 @@ CREATE TABLE REQUESTS_LOGS(
 DO
 $$
 DECLARE
-    start_date DATE := '2025-04-01';
-    partition_date DATE;
+    start_date TIMESTAMP := '2025-04-01';
+    partition_date TIMESTAMP;
     partition_name TEXT;
 BEGIN
     FOR i IN 0..23 LOOP
         partition_date := start_date + (i * INTERVAL '1 month');
         partition_name := 'requests_logs_' || TO_CHAR(partition_date, 'YYYY_MM');
         EXECUTE format(
-            'CREATE TABLE IF NOT EXISTS %I PARTITION OF REQUESTS_LOGS FOR VALUES FROM (%L) TO (%L)',
+            'CREATE TABLE IF NOT EXISTS %I PARTITION OF REQUESTS_LOGS FOR VALUES FROM (TIMESTAMP %L) TO (TIMESTAMP %L)',
             partition_name,
-            partition_date,
-            partition_date + INTERVAL '1 month'
+            TO_CHAR(partition_date, 'YYYY-MM-DD HH24:MI:SS'),
+            TO_CHAR(partition_date + INTERVAL '1 month', 'YYYY-MM-DD HH24:MI:SS')
         );
     END LOOP;
 END;
@@ -478,6 +478,36 @@ CREATE INDEX idx_plat_traitement_label ON PLAT_TRAITEMENT (CLASSIFICATION);
 CREATE INDEX idx_plat_traitement_traite_le ON PLAT_TRAITEMENT (TRAITE_LE);
 CREATE INDEX idx_plat_allergene_allergene ON PLAT_ALLERGENE (IDALLERGENE);
 CREATE INDEX idx_valeurs_nutritionnelles_kcal ON VALEURS_NUTRITIONNELLES (ENERGIE_KCAL);
+
+
+-- Maintenance des partitions de REQUESTS_LOGS
+-- Crée les partitions mensuelles manquantes pour les N prochains mois.
+-- À appeler au démarrage de l'API ou via pg_cron.
+CREATE OR REPLACE FUNCTION maintain_requests_logs_partitions(months_ahead INT DEFAULT 3)
+RETURNS VOID AS $$
+DECLARE
+    partition_date TIMESTAMP;
+    partition_name TEXT;
+BEGIN
+    FOR i IN 0..months_ahead LOOP
+        partition_date := DATE_TRUNC('month', NOW()) + (i * INTERVAL '1 month');
+        partition_name := 'requests_logs_' || TO_CHAR(partition_date, 'YYYY_MM');
+
+        IF NOT EXISTS (
+            SELECT 1 FROM pg_tables
+            WHERE schemaname = 'public' AND tablename = partition_name
+        ) THEN
+            EXECUTE format(
+                'CREATE TABLE %I PARTITION OF REQUESTS_LOGS FOR VALUES FROM (TIMESTAMP %L) TO (TIMESTAMP %L)',
+                partition_name,
+                TO_CHAR(partition_date, 'YYYY-MM-DD HH24:MI:SS'),
+                TO_CHAR(partition_date + INTERVAL '1 month', 'YYYY-MM-DD HH24:MI:SS')
+            );
+            RAISE NOTICE 'Created partition %', partition_name;
+        END IF;
+    END LOOP;
+END;
+$$ LANGUAGE plpgsql;
 
 
 -- Listener
