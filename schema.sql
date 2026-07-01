@@ -2,7 +2,7 @@
     *  CROUStillant - schema.sql
     *  Created by: CROUStillant Développement
     *  Created on: 13/11/2023
-    *  Updated on: 20/04/2026
+    *  Updated on: 01/07/2026
     *  Description: SQL database scheme for the CROUStillant project
 ***************************************************************/
 
@@ -356,7 +356,6 @@ CREATE TABLE TACHE(
         DEBUT_RESTAURANTS <= FIN_RESTAURANTS AND 
         DEBUT_TYPES_RESTAURANTS <= FIN_TYPES_RESTAURANTS AND
         DEBUT_MENUS <= FIN_MENUS AND
-        DEBUT_REPAS <= FIN_REPAS AND
         DEBUT_PLATS <= FIN_PLATS AND
         DEBUT <= FIN
     ),
