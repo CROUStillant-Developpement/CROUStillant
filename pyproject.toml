@@ -10,7 +10,7 @@ dependencies = [
     "asyncpg>=0.30.0",
     "crouspy",
     "discord-py>=2.6.3",
-    "pillow>=11.3.0",
+    "pillow>=12.3.0",
     "python-dotenv>=1.1.0",
     "pytz>=2026.2",
 ]
