@@ -248,6 +248,21 @@ Nombre de restaurants actifs : `{actifs:,d}`
             """
         )
 
+        # Rafraîchissement de la vue matérialisée des insights restaurants
+        # (couverture, variété, richesse, plats fréquents par restaurant)
+        await connection.execute(
+            """
+                REFRESH MATERIALIZED VIEW CONCURRENTLY v_restaurant_insights_summary;
+            """
+        )
+
+        # Rafraîchissement de la vue matérialisée du top 100 des plats
+        await connection.execute(
+            """
+                REFRESH MATERIALIZED VIEW CONCURRENTLY v_plats_top;
+            """
+        )
+
     # Récupération des statistiques finales
     stats = await worker.getStats()
 

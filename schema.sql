@@ -2,7 +2,7 @@
     *  CROUStillant - schema.sql
     *  Created by: CROUStillant Développement
     *  Created on: 13/11/2023
-    *  Updated on: 01/07/2026
+    *  Updated on: 12/07/2026
     *  Description: SQL database scheme for the CROUStillant project
 ***************************************************************/
 
@@ -565,3 +565,113 @@ SELECT
 WITH DATA;
 
 CREATE UNIQUE INDEX IF NOT EXISTS v_stats_unique_idx ON v_stats (id);
+
+
+-- Vue pour les insights des restaurants (couverture, variété, richesse, plats fréquents)
+-- sur l'année scolaire en cours (du 1er septembre à hier).
+--
+-- Ces agrégats traversent PLAT -> COMPOSITION -> CATEGORIE -> REPAS -> MENU, quatre tables
+-- partitionnées par HASH sur leur propre clé primaire (non alignée avec les clés de jointure) :
+-- calculées en direct par restaurant sur une période aussi large, ces jointures dégénèrent en
+-- boucles imbriquées qui parcourent les 30 partitions de chaque table pour chaque ligne de MENU
+-- (plusieurs secondes par restaurant). Cette vue matérialisée fait le calcul une seule fois pour
+-- tous les restaurants ; l'API n'a plus qu'à lire une ligne par RID.
+--
+-- Rafraîchie une fois par cycle d'ingestion (voir CROUStillant/__main__.py, juste après le
+-- rafraîchissement de v_stats) : les chiffres sont donc à jour "à la dernière ingestion", ce qui
+-- convient pour des statistiques qui ne changent qu'une fois par jour au plus.
+CREATE MATERIALIZED VIEW v_restaurant_insights_summary AS
+WITH bounds AS (
+    SELECT
+        (CASE
+            WHEN EXTRACT(MONTH FROM CURRENT_DATE) >= 9
+                THEN MAKE_DATE(EXTRACT(YEAR FROM CURRENT_DATE)::int, 9, 1)
+            ELSE MAKE_DATE(EXTRACT(YEAR FROM CURRENT_DATE)::int - 1, 9, 1)
+        END) AS periode_debut,
+        (CURRENT_DATE - 1) AS periode_fin
+),
+base AS (
+    SELECT
+        M.RID,
+        RP.RPID,
+        C.CATID,
+        CO.PLATID
+    FROM MENU M
+    CROSS JOIN bounds B
+    JOIN REPAS RP ON RP.MID = M.MID
+    JOIN CATEGORIE C ON C.RPID = RP.RPID
+    LEFT JOIN COMPOSITION CO ON CO.CATID = C.CATID
+    WHERE M.DATE BETWEEN B.periode_debut AND B.periode_fin
+),
+richness AS (
+    SELECT
+        RID,
+        COUNT(DISTINCT RPID) AS nb_repas,
+        COUNT(DISTINCT CATID) AS nb_categories,
+        COUNT(PLATID) AS nb_plats,
+        COUNT(DISTINCT PLATID) AS plats_uniques
+    FROM base
+    GROUP BY RID
+),
+ranked_dishes AS (
+    SELECT
+        RID,
+        PLATID,
+        COUNT(*) AS nb,
+        ROW_NUMBER() OVER (PARTITION BY RID ORDER BY COUNT(*) DESC) AS rn
+    FROM base
+    WHERE PLATID IS NOT NULL
+    GROUP BY RID, PLATID
+),
+top_dishes AS (
+    SELECT
+        RD.RID,
+        JSONB_AGG(
+            JSONB_BUILD_OBJECT('code', RD.PLATID, 'libelle', P.LIBELLE, 'total', RD.NB)
+            ORDER BY RD.NB DESC
+        ) AS plats_frequents
+    FROM ranked_dishes RD
+    JOIN PLAT P ON P.PLATID = RD.PLATID
+    WHERE RD.RN <= 20
+    GROUP BY RD.RID
+)
+SELECT
+    R.RID AS rid,
+    (SELECT periode_debut FROM bounds) AS periode_debut,
+    (SELECT periode_fin FROM bounds) AS periode_fin,
+    COALESCE(RI.nb_repas, 0) AS nb_repas,
+    COALESCE(RI.nb_categories, 0) AS nb_categories,
+    COALESCE(RI.nb_plats, 0) AS nb_plats,
+    COALESCE(RI.plats_uniques, 0) AS plats_uniques,
+    COALESCE(TD.plats_frequents, '[]'::jsonb) AS plats_frequents
+FROM RESTAURANT R
+LEFT JOIN richness RI ON RI.RID = R.RID
+LEFT JOIN top_dishes TD ON TD.RID = R.RID
+WHERE R.ACTIF = TRUE
+WITH DATA;
+
+CREATE UNIQUE INDEX IF NOT EXISTS v_restaurant_insights_summary_rid_idx ON v_restaurant_insights_summary (rid);
+
+
+-- Vue pour le top 100 des plats les plus populaires (tous restaurants de type CROUS, IDTPR = 1).
+-- Même jointure PLAT -> COMPOSITION -> CATEGORIE -> REPAS -> MENU -> RESTAURANT que `/plats/top`
+-- calculait en direct à chaque requête ; précalculée ici et rafraîchie au même rythme que les
+-- autres vues (voir CROUStillant/__main__.py).
+CREATE MATERIALIZED VIEW v_plats_top AS
+SELECT
+    P.PLATID AS platid,
+    P.LIBELLE AS libelle,
+    COUNT(*) AS nb,
+    ROW_NUMBER() OVER (ORDER BY COUNT(*) DESC) AS rang
+FROM PLAT P
+JOIN COMPOSITION CO ON P.PLATID = CO.PLATID
+JOIN CATEGORIE C ON C.CATID = CO.CATID
+JOIN REPAS RP ON RP.RPID = C.RPID
+JOIN MENU M ON M.MID = RP.MID
+JOIN RESTAURANT R ON R.RID = M.RID AND R.IDTPR = 1
+GROUP BY P.PLATID, P.LIBELLE
+ORDER BY nb DESC
+LIMIT 100
+WITH DATA;
+
+CREATE UNIQUE INDEX IF NOT EXISTS v_plats_top_platid_idx ON v_plats_top (platid);
