@@ -1,18 +1,19 @@
 import asyncio
-
-from CrousPy import Crous
-from CROUStillant.logger import Logger
-from CROUStillant.worker import Worker
-from CROUStillant.views import WorkerView, ErrorView
-from asyncpg import create_pool, Connection
-from aiohttp import ClientSession
+from datetime import datetime
 from os import environ
-from dotenv import load_dotenv
+
+from aiohttp import ClientSession
+from asyncpg import Connection, create_pool
+from CROUStillant.logger import Logger
+from CROUStillant.utils import formatDuration, formatError, formatStats
+from CROUStillant.views import ErrorView, WorkerView
+from CROUStillant.worker import Worker
 from discord import Webhook
 from discord.ui import LayoutView
-from datetime import datetime
+from dotenv import load_dotenv
 from pytz import timezone
 
+from CrousPy import Crous
 
 load_dotenv(dotenv_path="/CROUStillant/.env")
 
@@ -62,8 +63,11 @@ async def main():
     # Lancement de la tâche de fond
     webhook = Webhook.from_url(environ["WEBHOOK_URL"], session=session)
     year = datetime.now(timezone("Europe/Paris")).year
+    footer_text = "CROUStillant Développement © 2022 - {year} | Tous droits réservés.".format(year=year)
     stats = await worker.getStats()
     start = datetime.now()
+    startTimestamp = int(start.timestamp())
+    initialStats = {**stats, "actifs": len(restaurants)}
 
     # Création d'une tâche de fond pour mettre à jour les données
     async with pool.acquire() as connection:
@@ -72,7 +76,7 @@ async def main():
         await connection.execute(
             """
                 INSERT INTO TACHE (
-                    DEBUT, DEBUT_REGIONS, DEBUT_RESTAURANTS, DEBUT_TYPES_RESTAURANTS, DEBUT_MENUS, DEBUT_REPAS, 
+                    DEBUT, DEBUT_REGIONS, DEBUT_RESTAURANTS, DEBUT_TYPES_RESTAURANTS, DEBUT_MENUS, DEBUT_REPAS,
                     DEBUT_CATEGORIES, DEBUT_PLATS, DEBUT_COMPOSITIONS, DEBUT_ACTIFS
                 )
                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10);
@@ -94,33 +98,15 @@ async def main():
 
     # Startup message
     view = WorkerView(
-        content="## Tâche de fond démarrée ! Chargement des données...\n\nTâche **`#{taskId}`**".format(
-            taskId=taskId,
+        content=(
+            f"## 🚀 • Tâche de fond démarrée !\n"
+            f"Chargement des données en cours...\n\n"
+            f"Tâche **`#{taskId}`** · Démarrée <t:{startTimestamp}:R>"
         ),
-        stats="""
-Nombre de régions : `{regions:,d}`
-Nombre de restaurants : `{restaurants:,d}`
-Nombre de types de restauration : `{types_restaurants:,d}`
-Nombre de menus : `{menus:,d}`
-Nombre de repas : `{repas:,d}`
-Nombre de catégories : `{categories:,d}`
-Nombre de plats : `{plats:,d}`
-Nombre de compositions : `{compositions:,d}`
-Nombre de restaurants actifs : `{actifs:,d}`
-        """.format(
-            regions=stats["regions"],
-            restaurants=stats["restaurants"],
-            types_restaurants=stats["types_restaurants"],
-            menus=stats["menus"],
-            repas=stats["repas"],
-            categories=stats["categories"],
-            plats=stats["plats"],
-            compositions=stats["compositions"],
-            actifs=len(restaurants),
-        ),
+        stats=formatStats(initialStats),
         thumbnail_url=environ["THUMBNAIL_URL"],
         banner_url=environ["IMAGE_URL"],
-        footer_text="CROUStillant Développement © 2022 - {year} | Tous droits réservés.".format(year=year),
+        footer_text=footer_text,
     )
 
     await sendWebhook(webhook=webhook, view=view)
@@ -133,13 +119,17 @@ Nombre de restaurants actifs : `{actifs:,d}`
     except Exception as e:
         logger.error(f"Erreur lors du chargement des régions : {e}")
 
+        elapsed = (datetime.now() - start).total_seconds()
+
         view = ErrorView(
-            content="## Erreur lors du chargement des régions. L'API du CROUS est indisponible ?\n\nTâche **`#{taskId}`**".format(
-                taskId=taskId,
+            content=(
+                f"## ❌ • Erreur lors du chargement des régions\n"
+                f"L'API du CROUS est-elle indisponible ? Tâche **`#{taskId}`**\n\n"
+                f"{formatError(e, elapsed, worker.requests)}"
             ),
             thumbnail_url=environ["THUMBNAIL_URL"],
             banner_url=environ["IMAGE_URL"],
-            footer_text="CROUStillant Développement © 2022 - {year} | Tous droits réservés.".format(year=year),
+            footer_text=footer_text,
         )
 
         await sendWebhook(
@@ -153,7 +143,7 @@ Nombre de restaurants actifs : `{actifs:,d}`
             await connection.execute(
                 """
                     UPDATE TACHE
-                    SET FIN = $1, FIN_REGIONS = $2, FIN_RESTAURANTS = $3, FIN_TYPES_RESTAURANTS = $4, FIN_MENUS = $5, 
+                    SET FIN = $1, FIN_REGIONS = $2, FIN_RESTAURANTS = $3, FIN_TYPES_RESTAURANTS = $4, FIN_MENUS = $5,
                         FIN_REPAS = $6, FIN_CATEGORIES = $7, FIN_PLATS = $8, FIN_COMPOSITIONS = $9, FIN_ACTIFS = $10,
                         REQUETES = $11
                     WHERE ID = $12;
@@ -168,7 +158,7 @@ Nombre de restaurants actifs : `{actifs:,d}`
                 stats["plats"],
                 stats["compositions"],
                 len(restaurants),
-                0,
+                worker.requests,
                 taskId,
             )
 
@@ -179,13 +169,17 @@ Nombre de restaurants actifs : `{actifs:,d}`
     except Exception as e:
         logger.error(f"Erreur lors du chargement des restaurants : {e}")
 
+        elapsed = (datetime.now() - start).total_seconds()
+
         view = ErrorView(
-            content="## Erreur lors du chargement des restaurants. L'API du CROUS est indisponible ?\n\nTâche **`#{taskId}`**".format(
-                taskId=taskId,
+            content=(
+                f"## ❌ • Erreur lors du chargement des restaurants\n"
+                f"L'API du CROUS est-elle indisponible ? Tâche **`#{taskId}`**\n\n"
+                f"{formatError(e, elapsed, worker.requests)}"
             ),
             thumbnail_url=environ["THUMBNAIL_URL"],
             banner_url=environ["IMAGE_URL"],
-            footer_text="CROUStillant Développement © 2022 - {year} | Tous droits réservés.".format(year=year),
+            footer_text=footer_text,
         )
 
         await sendWebhook(
@@ -199,7 +193,7 @@ Nombre de restaurants actifs : `{actifs:,d}`
             await connection.execute(
                 """
                     UPDATE TACHE
-                    SET FIN = $1, FIN_REGIONS = $2, FIN_RESTAURANTS = $3, FIN_TYPES_RESTAURANTS = $4, FIN_MENUS = $5, 
+                    SET FIN = $1, FIN_REGIONS = $2, FIN_RESTAURANTS = $3, FIN_TYPES_RESTAURANTS = $4, FIN_MENUS = $5,
                         FIN_REPAS = $6, FIN_CATEGORIES = $7, FIN_PLATS = $8, FIN_COMPOSITIONS = $9, FIN_ACTIFS = $10,
                         REQUETES = $11
                     WHERE ID = $12;
@@ -214,7 +208,7 @@ Nombre de restaurants actifs : `{actifs:,d}`
                 stats["plats"],
                 stats["compositions"],
                 len(restaurants),
-                0,
+                worker.requests,
                 taskId,
             )
 
@@ -236,6 +230,7 @@ Nombre de restaurants actifs : `{actifs:,d}`
     # Fin de la tâche de fond
     end = datetime.now()
     elapsed = end - start
+    endTimestamp = int(end.timestamp())
 
     # Mise à jour des données
     async with pool.acquire() as connection:
@@ -265,6 +260,7 @@ Nombre de restaurants actifs : `{actifs:,d}`
 
     # Récupération des statistiques finales
     stats = await worker.getStats()
+    finalStats = {**stats, "actifs": len(restaurants)}
 
     # Mise à jour de la tâche
     async with pool.acquire() as connection:
@@ -273,7 +269,7 @@ Nombre de restaurants actifs : `{actifs:,d}`
         await connection.execute(
             """
                 UPDATE TACHE
-                SET FIN = $1, FIN_REGIONS = $2, FIN_RESTAURANTS = $3, FIN_TYPES_RESTAURANTS = $4, FIN_MENUS = $5, 
+                SET FIN = $1, FIN_REGIONS = $2, FIN_RESTAURANTS = $3, FIN_TYPES_RESTAURANTS = $4, FIN_MENUS = $5,
                     FIN_REPAS = $6, FIN_CATEGORIES = $7, FIN_PLATS = $8, FIN_COMPOSITIONS = $9, FIN_ACTIFS = $10,
                     REQUETES = $11
                 WHERE ID = $12;
@@ -293,35 +289,20 @@ Nombre de restaurants actifs : `{actifs:,d}`
         )
 
     # Envoi du message de fin
+    finalStatsBlock = formatStats(finalStats, previous=initialStats)
+    finalStatsBlock += f"\n` ⏱️ ` Durée : ` {formatDuration(elapsed.total_seconds())} `"
+    finalStatsBlock += f"\n` 🌐 ` Requêtes API : **` {worker.requests:,d} `**"
+
     view = WorkerView(
-        content="## Tâche de fond terminée ! Données chargées.\nTemps écoulé : `{elapsed}` secondes.\n\nTâche **`#{taskId}`**".format(
-            elapsed=round(elapsed.total_seconds(), 2),
-            taskId=taskId,
+        content=(
+            f"## ✅ • Tâche de fond terminée !\n"
+            f"Données chargées avec succès.\n\n"
+            f"Tâche **`#{taskId}`** · Terminée <t:{endTimestamp}:R>"
         ),
-        stats="""
-Nombre de régions : `{regions:,d}`
-Nombre de restaurants : `{restaurants:,d}`
-Nombre de types de restauration : `{types_restaurants:,d}`
-Nombre de menus : `{menus:,d}`
-Nombre de repas : `{repas:,d}`
-Nombre de catégories : `{categories:,d}`
-Nombre de plats : `{plats:,d}`
-Nombre de compositions : `{compositions:,d}`
-Nombre de restaurants actifs : `{actifs:,d}`
-        """.format(
-            regions=stats["regions"],
-            restaurants=stats["restaurants"],
-            types_restaurants=stats["types_restaurants"],
-            menus=stats["menus"],
-            repas=stats["repas"],
-            categories=stats["categories"],
-            plats=stats["plats"],
-            compositions=stats["compositions"],
-            actifs=len(restaurants),
-        ),
+        stats=finalStatsBlock,
         thumbnail_url=environ["THUMBNAIL_URL"],
         banner_url=environ["IMAGE_URL"],
-        footer_text="CROUStillant Développement © 2022 - {year} | Tous droits réservés.".format(year=year),
+        footer_text=footer_text,
     )
 
     await sendWebhook(webhook=webhook, view=view)
