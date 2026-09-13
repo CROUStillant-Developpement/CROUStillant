@@ -93,7 +93,8 @@ INSERT INTO TYPE_LOG (IDTPL, LIBELLE) VALUES  (
     (6, 'Paramètres supprimés'),
     (7, 'Suppression automatique des paramètres'),
     (8, 'Serveur ajouté'),
-    (9, 'Serveur supprimé')
+    (9, 'Serveur supprimé'),
+    (10, 'Menu inchangé')
 );
 
 
