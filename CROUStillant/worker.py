@@ -1,7 +1,7 @@
 import hashlib
 import asyncio
 
-from CrousPy import Crous, Region, RU, Menu
+from CrousPy import Crous, Region, RU, Menu, Menus
 from CROUStillant.logger import Logger
 from asyncpg import Pool, Connection
 from json import dumps
@@ -34,6 +34,9 @@ class Worker:
         self.taskId = None
         self.requests = 0
 
+        # Restaurants dont les menus ont été modifiés (RID, nom)
+        self.updatedRestaurants: list[tuple[int, str]] = []
+
     async def getStats(self) -> dict:
         """
         Récupère les statistiques.
@@ -51,6 +54,34 @@ class Worker:
             )
 
         return dict(stats)
+
+    async def _retry(self, request, label: str, retries: int = 3, delay: float = 1.0):
+        """
+        Exécute une requête vers le CROUS avec plusieurs tentatives.
+
+        :param request: Fonction sans argument retournant la coroutine de la requête
+        :param label: Libellé de la requête (pour les logs)
+        :type label: str
+        :param retries: Nombre de tentatives
+        :type retries: int
+        :param delay: Délai de base entre les tentatives (secondes), multiplié par le numéro de la tentative
+        :type delay: float
+        :return: Le résultat de la requête
+        """
+        for attempt in range(1, retries + 1):
+            try:
+                self.logger.debug(f"{label} (attempt {attempt}/{retries})")
+                result = await request()
+                self.requests += 1
+                return result
+            except Exception as e:
+                self.logger.warning(f"{label} failed (attempt {attempt}/{retries}): {e}")
+
+                if attempt == retries:
+                    self.logger.error(f"{label} failed after {retries} attempts")
+                    raise
+
+                await asyncio.sleep(delay * attempt)
 
     async def _retry_region_get(self, retries: int = 3, delay: float = 1.0) -> list[Region]:
         """
@@ -226,10 +257,18 @@ class Worker:
                         )
 
                     async with connection.transaction():
+                        if restaurant.feedId is not None:
+                            # Si l'API a renuméroté le restaurant, libère l'ID du flux de l'ancien RID
+                            await connection.execute(
+                                "UPDATE RESTAURANT SET FEED_ID = NULL WHERE FEED_ID = $1 AND RID <> $2",
+                                restaurant.feedId,
+                                restaurant.id,
+                            )
+
                         await connection.execute(
                             """
-                                INSERT INTO restaurant (RID, IDREG, IDTPR, NOM, ADRESSE, LATITUDE, LONGITUDE, HORAIRES, JOURS_OUVERT, IMAGE_URL, EMAIL, TELEPHONE, ISPMR, ZONE, PAIEMENT, ACCES, OPENED, AJOUT)
-                                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+                                INSERT INTO restaurant (RID, IDREG, IDTPR, NOM, ADRESSE, LATITUDE, LONGITUDE, HORAIRES, JOURS_OUVERT, IMAGE_URL, EMAIL, TELEPHONE, ISPMR, ZONE, PAIEMENT, ACCES, OPENED, AJOUT, FEED_ID)
+                                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
                                 ON CONFLICT (RID) DO UPDATE SET
                                     IDTPR = $3,
                                     NOM = $4,
@@ -246,7 +285,8 @@ class Worker:
                                     PAIEMENT = $15,
                                     ACCES = $16,
                                     OPENED = $17,
-                                    MIS_A_JOUR = $18
+                                    MIS_A_JOUR = $18,
+                                    FEED_ID = $19
                             """,
                             restaurant.id,
                             region.id,
@@ -272,6 +312,7 @@ class Worker:
                             else None,
                             restaurant.open,
                             datetime.now(),
+                            restaurant.feedId,
                         )
 
                     if restaurant.image_url:
@@ -302,18 +343,25 @@ class Worker:
                     #     self.logger.debug(f"Le restaurant {restaurant.title} est fermé ! Aucun menu ne sera chargé.")
 
                     # Le restaurant peut être fermé aujourd'hui mais les menus peuvent être disponibles pour les jours suivants
-                    await self.loadMenus(region, restaurant)
+                    menus, _ = await self.loadMenus(region.id, restaurant.id, restaurant.title)
 
-    def compute_menu_hash(self, menu: Menu) -> str:
+                    # Enregistre l'empreinte des menus : la synchronisation via les flux
+                    # ne rechargera ce restaurant que si ses menus changent dans le flux
+                    await connection.execute(
+                        "UPDATE RESTAURANT SET FEED_MENUS_HASH = $1 WHERE RID = $2",
+                        self.computeMenusHash(menus),
+                        restaurant.id,
+                    )
+
+    def _menuData(self, menu: Menu) -> dict:
         """
-        Calcule un hash unique pour un menu basé sur son contenu complet.
+        Représentation structurée du contenu d'un menu, utilisée pour le hachage.
 
-        :param menu: Le menu pour lequel calculer le hash
+        :param menu: Le menu
         :type menu: Menu
-        :return: Hash SHA256 du contenu du menu
-        :rtype: str
+        :return: Le contenu du menu
+        :rtype: dict
         """
-        # Créer une représentation structurée du menu pour le hachage
         # Note: On n'inclut pas l'ID car on compare par ID, uniquement le contenu
         menu_data = {
             "date": str(menu.date),
@@ -335,9 +383,36 @@ class Worker:
 
             menu_data["meals"].append(meal_data)
 
-        # Convertir en JSON et calculer le hash
-        menu_json = dumps(menu_data, sort_keys=True, ensure_ascii=False)
+        return menu_data
+
+    def compute_menu_hash(self, menu: Menu) -> str:
+        """
+        Calcule un hash unique pour un menu basé sur son contenu complet.
+
+        :param menu: Le menu pour lequel calculer le hash
+        :type menu: Menu
+        :return: Hash SHA256 du contenu du menu
+        :rtype: str
+        """
+        menu_json = dumps(self._menuData(menu), sort_keys=True, ensure_ascii=False)
         return hashlib.sha256(menu_json.encode('utf-8')).hexdigest()
+
+    def computeMenusHash(self, menus: Menus) -> str:
+        """
+        Calcule un hash de l'ensemble des menus d'un restaurant.
+
+        Les menus des flux et ceux de l'API sont représentés par les mêmes entités :
+        un contenu identique donne donc le même hash, quelle que soit la source.
+
+        :param menus: Les menus du restaurant
+        :type menus: Menus
+        :return: Hash SHA256 du contenu des menus
+        :rtype: str
+        """
+        menus_json = dumps(
+            [self._menuData(menu) for menu in menus], sort_keys=True, ensure_ascii=False
+        )
+        return hashlib.sha256(menus_json.encode('utf-8')).hexdigest()
 
     async def _retry_menu_get(self, region_id: int, ru_id: int, retries: int = 3, delay: float = 1.0):
         """
@@ -390,20 +465,26 @@ class Worker:
             "Failed to load menus after retries, but no exception was captured"
         )
 
-    async def loadMenus(self, region: Region, ru: RU) -> None:
+    async def loadMenus(self, regionId: int, rid: int, title: str) -> tuple[Menus, int]:
         """
         Charge les menus et les enregistre dans la base de données.
 
-        :param region: La région
-        :type region: Region
-        :param ru: Le restaurant universitaire
-        :type ru: RU
+        :param regionId: L'ID de la région
+        :type regionId: int
+        :param rid: L'ID du restaurant universitaire
+        :type rid: int
+        :param title: Le nom du restaurant (pour les logs)
+        :type title: str
+        :return: Les menus chargés et le nombre de menus créés ou modifiés
+        :rtype: tuple[Menus, int]
         """
-        self.logger.info(f"Chargement des menus pour le restaurant {ru.title}...")
+        self.logger.info(f"Chargement des menus pour le restaurant {title}...")
 
-        menus = await self._retry_menu_get(region.id, ru.id)
+        menus = await self._retry_menu_get(regionId, rid)
 
-        self.logger.info(f"{len(menus)} menus chargés pour le restaurant {ru.title} !")
+        self.logger.info(f"{len(menus)} menus chargés pour le restaurant {title} !")
+
+        written = 0
 
         async with self.pool.acquire() as connection:
             connection: Connection
@@ -432,6 +513,8 @@ class Worker:
                         )
                         self.logger.debug(f"Menu {menu.id} inchangé, skip")
                         continue
+
+                    written += 1
 
                     # Si le menu a changé ou n'existe pas, supprimer les anciens enregistrements liés
                     await connection.execute(
@@ -470,7 +553,7 @@ class Worker:
                             SET MENU_HASH = EXCLUDED.MENU_HASH
                         """,
                         menu.id,
-                        ru.id,
+                        rid,
                         menu.date,
                         menu_hash,
                     )
@@ -515,14 +598,14 @@ class Worker:
                                 # Vérifie la longueur du nom du plat pour éviter les erreurs de dépassement de capacité de la base de données
                                 if len(dish.name) >= 499:
                                     self.logger.critical(
-                                        f"Le plat '{dish.name}' est trop long ({len(dish.name)} caractères). Debug: [RID: {ru.id}, RPID: {rpid}, CATID: {catid}]"
+                                        f"Le plat '{dish.name}' est trop long ({len(dish.name)} caractères). Debug: [RID: {rid}, RPID: {rpid}, CATID: {catid}]"
                                     )
                                     # Ignore ce plat
                                     continue
 
                                 if not dish.name.strip():
                                     self.logger.critical(
-                                        f"Le plat a un nom vide. Debug: [RID: {ru.id}, RPID: {rpid}, CATID: {catid}]"
+                                        f"Le plat a un nom vide. Debug: [RID: {rid}, RPID: {rpid}, CATID: {catid}]"
                                     )
                                     # Ignore ce plat
                                     continue
@@ -556,6 +639,8 @@ class Worker:
                                     platid,
                                 )
 
+        return menus, written
+
     async def loadImage(self, image_url: str) -> None:
         """
         Charge une image et l'enregistre dans la base de données.
@@ -567,8 +652,7 @@ class Worker:
         try:
             self.logger.debug(f"GET {image_url}")
 
-            async with self.client.client.session.get(image_url) as resp:
-                image_binary = BytesIO(await resp.read())
+            image_binary = BytesIO(await self.client.image.get(image_url))
 
             self.logger.info(f"Image {image_url} chargée !")
         except Exception as e:
@@ -651,3 +735,149 @@ class Worker:
                 )
 
         self.logger.info("Statut des restaurants mis à jour !")
+
+    async def syncFromFeeds(self) -> dict:
+        """
+        Synchronise les menus à partir des flux régionaux du CROUS.
+
+        Les flux (un fichier par région, régénéré toutes les 15 minutes) contiennent
+        tous les restaurants et leurs menus, mais sans ID de menu. Ils servent donc
+        uniquement à détecter les restaurants dont les menus ont changé : seuls
+        ceux-ci sont rechargés depuis l'API, qui fournit les IDs de menus.
+
+        L'empreinte d'un restaurant (FEED_MENUS_HASH) n'est mise à jour que si les
+        menus de l'API correspondent à ceux du flux. Si l'API n'est pas encore à jour
+        (elle est synchronisée à partir des flux avec un léger décalage), le
+        restaurant sera simplement rechargé lors de la prochaine synchronisation.
+
+        :return: Les compteurs de la synchronisation
+        :rtype: dict
+        """
+        self.logger.info("Synchronisation des menus via les flux régionaux...")
+
+        counters = {
+            "feeds": 0,
+            "feeds_failed": 0,
+            "restaurants": 0,
+            "changed": 0,
+            "updated": 0,
+            "lagging": 0,
+            "failed": 0,
+            "ignored": 0,
+            "opened": 0,
+        }
+
+        feeds = await self._retry(self.client.feed.get, "GET /feed/feeds.json")
+
+        semaphore = asyncio.Semaphore(5)
+
+        async def fetchFeed(feed):
+            async with semaphore:
+                return await self._retry(
+                    lambda: self.client.feed.getByURL(feed.url), f"GET {feed.url}"
+                )
+
+        results = await asyncio.gather(
+            *(fetchFeed(feed) for feed in feeds.feeds), return_exceptions=True
+        )
+
+        feedRestaurants = []
+        for feed, result in zip(feeds.feeds, results):
+            if isinstance(result, BaseException):
+                counters["feeds_failed"] += 1
+                self.logger.error(f"Impossible de charger le flux {feed.name} : {result}")
+                continue
+
+            counters["feeds"] += 1
+            feedRestaurants.extend(result.rus)
+
+        if counters["feeds"] == 0:
+            raise RuntimeError("Aucun flux régional n'a pu être chargé")
+
+        async with self.pool.acquire() as connection:
+            connection: Connection
+
+            rows = await connection.fetch(
+                """
+                    SELECT RID, IDREG, NOM, FEED_ID, FEED_MENUS_HASH
+                    FROM RESTAURANT
+                    WHERE ACTIF = TRUE AND FEED_ID IS NOT NULL
+                """
+            )
+
+        known = {row["feed_id"]: row for row in rows}
+
+        changed = []
+        opened = []
+        for feedRu in feedRestaurants:
+            row = known.get(feedRu.id)
+
+            if row is None:
+                # Restaurant inactif ou pas encore connu : pris en compte par la tâche complète
+                counters["ignored"] += 1
+                continue
+
+            counters["restaurants"] += 1
+            opened.append((row["rid"], feedRu.open))
+
+            feedHash = self.computeMenusHash(feedRu.menus)
+            if feedHash != row["feed_menus_hash"]:
+                changed.append((row, feedHash))
+
+        counters["changed"] = len(changed)
+
+        self.logger.info(
+            f"{counters['feeds']} flux chargés, {counters['restaurants']} restaurants, "
+            f"{counters['changed']} avec des menus modifiés"
+        )
+
+        async with self.pool.acquire() as connection:
+            connection: Connection
+
+            status = await connection.execute(
+                """
+                    UPDATE RESTAURANT R
+                    SET OPENED = U.OPENED
+                    FROM unnest($1::int[], $2::bool[]) AS U(RID, OPENED)
+                    WHERE R.RID = U.RID AND R.OPENED IS DISTINCT FROM U.OPENED
+                """,
+                [rid for rid, _ in opened],
+                [isOpen for _, isOpen in opened],
+            )
+            counters["opened"] = int(status.split()[-1])
+
+        for row, feedHash in changed:
+            try:
+                menus, written = await self.loadMenus(row["idreg"], row["rid"], row["nom"])
+            except Exception as e:
+                counters["failed"] += 1
+                self.logger.error(
+                    f"Impossible de charger les menus du restaurant {row['nom']} ({row['rid']}) : {e}"
+                )
+                continue
+
+            if written:
+                counters["updated"] += 1
+                self.updatedRestaurants.append((row["rid"], row["nom"]))
+
+            if self.computeMenusHash(menus) != feedHash:
+                # L'API n'est pas encore à jour : nouvel essai à la prochaine synchronisation
+                counters["lagging"] += 1
+                self.logger.warning(
+                    f"Les menus de l'API du restaurant {row['nom']} ({row['rid']}) "
+                    f"ne correspondent pas encore au flux"
+                )
+                continue
+
+            async with self.pool.acquire() as connection:
+                connection: Connection
+
+                await connection.execute(
+                    "UPDATE RESTAURANT SET FEED_MENUS_HASH = $1 WHERE RID = $2",
+                    feedHash,
+                    row["rid"],
+                )
+
+        self.logger.info(f"Synchronisation via les flux terminée : {counters}")
+
+        return counters

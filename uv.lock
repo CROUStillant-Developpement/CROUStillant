@@ -212,8 +212,8 @@ wheels = [
 
 [[package]]
 name = "crouspy"
-version = "2.0.7"
-source = { git = "https://github.com/CROUStillant-Developpement/CrousPy.git#d98667490264f3bf04ea0c7a5dae2f5da3d1b4b5" }
+version = "2.1.0"
+source = { git = "https://github.com/CROUStillant-Developpement/CrousPy.git#1a9487f131498a0215f22d4e2ea4cae6bf89c16b" }
 dependencies = [
     { name = "aiohttp" },
     { name = "async-timeout" },
