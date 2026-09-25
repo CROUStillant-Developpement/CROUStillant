@@ -50,6 +50,8 @@ CREATE TABLE RESTAURANT(
     AJOUT TIMESTAMP,
     MIS_A_JOUR TIMESTAMP,
     ACTIF BOOLEAN,
+    FEED_ID INT UNIQUE,
+    FEED_MENUS_HASH VARCHAR(64),
     CONSTRAINT FK_RESTAURANT_REGION FOREIGN KEY (IDREG) REFERENCES REGION(IDREG),
     CONSTRAINT FK_RESTAURANT_TYPE_RESTAURANT FOREIGN KEY (IDTPR) REFERENCES TYPE_RESTAURANT(IDTPR),
     CONSTRAINT FK_RESTAURANT_IMAGE FOREIGN KEY (IMAGE_URL) REFERENCES RESTAURANT_IMAGE(IMAGE_URL)
@@ -84,7 +86,7 @@ CREATE TABLE TYPE_LOG(
 );
 
 -- Ajout des types de log
-INSERT INTO TYPE_LOG (IDTPL, LIBELLE) VALUES  (
+INSERT INTO TYPE_LOG (IDTPL, LIBELLE) VALUES
     (1, 'Menu ajouté'),
     (2, 'Menu mis à jour'),
     (3, 'Erreur lors de la mise à jour du menu'),
@@ -94,8 +96,7 @@ INSERT INTO TYPE_LOG (IDTPL, LIBELLE) VALUES  (
     (7, 'Suppression automatique des paramètres'),
     (8, 'Serveur ajouté'),
     (9, 'Serveur supprimé'),
-    (10, 'Menu inchangé')
-);
+    (10, 'Menu inchangé');
 
 
 -- Logs des serveurs Discord
@@ -559,6 +560,100 @@ CREATE OR REPLACE TRIGGER notifyOnActifChange
 AFTER UPDATE ON RESTAURANT
 FOR EACH ROW
 EXECUTE FUNCTION notifyOnActifChange();
+
+
+-- Événements : historique des changements (menus, restaurants), diffusés en temps réel
+-- par l'API (GET /v1/evenements). Créés par des triggers, notifiés sur le canal 'evenement'.
+CREATE TABLE EVENEMENT(
+    ID BIGSERIAL PRIMARY KEY,
+    TYPE VARCHAR(50) NOT NULL,
+    RID INT,
+    DATE DATE,
+    MID INT,
+    DONNEES JSONB,
+    CREATION TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX idx_evenement_creation ON EVENEMENT (CREATION);
+CREATE INDEX idx_evenement_rid ON EVENEMENT (RID);
+
+
+-- Notification de chaque nouvel événement
+CREATE OR REPLACE FUNCTION notifyOnEvenement()
+RETURNS TRIGGER AS $$
+BEGIN
+    PERFORM pg_notify('evenement', NEW.ID::text);
+    RETURN NULL;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE OR REPLACE TRIGGER notifyOnEvenement
+AFTER INSERT ON EVENEMENT
+FOR EACH ROW
+EXECUTE FUNCTION notifyOnEvenement();
+
+
+-- Événements des menus : création, ou modification réelle du contenu (MENU_HASH)
+CREATE OR REPLACE FUNCTION evenementOnMenu()
+RETURNS TRIGGER AS $$
+BEGIN
+    IF TG_OP = 'INSERT' THEN
+        INSERT INTO EVENEMENT (TYPE, RID, DATE, MID)
+        VALUES ('menu.created', NEW.RID, NEW.DATE, NEW.MID);
+    ELSIF OLD.MENU_HASH IS DISTINCT FROM NEW.MENU_HASH THEN
+        INSERT INTO EVENEMENT (TYPE, RID, DATE, MID)
+        VALUES ('menu.updated', NEW.RID, NEW.DATE, NEW.MID);
+    END IF;
+    RETURN NULL;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE OR REPLACE TRIGGER evenementOnMenu
+AFTER INSERT OR UPDATE OF MENU_HASH ON MENU
+FOR EACH ROW
+EXECUTE FUNCTION evenementOnMenu();
+
+
+-- Événements des restaurants : création, activation / désactivation, ouverture / fermeture,
+-- et modification des informations (hors colonnes techniques mises à jour à chaque passage)
+CREATE OR REPLACE FUNCTION evenementOnRestaurant()
+RETURNS TRIGGER AS $$
+BEGIN
+    IF TG_OP = 'INSERT' THEN
+        INSERT INTO EVENEMENT (TYPE, RID) VALUES ('restaurant.created', NEW.RID);
+        RETURN NULL;
+    END IF;
+
+    IF OLD.ACTIF IS DISTINCT FROM NEW.ACTIF THEN
+        INSERT INTO EVENEMENT (TYPE, RID, DONNEES)
+        VALUES ('restaurant.actif', NEW.RID, jsonb_build_object('actif', NEW.ACTIF));
+    END IF;
+
+    IF OLD.OPENED IS DISTINCT FROM NEW.OPENED THEN
+        INSERT INTO EVENEMENT (TYPE, RID, DONNEES)
+        VALUES ('restaurant.opened', NEW.RID, jsonb_build_object('opened', NEW.OPENED));
+    END IF;
+
+    IF (
+        OLD.IDREG, OLD.IDTPR, OLD.NOM, OLD.ADRESSE, OLD.LATITUDE, OLD.LONGITUDE, OLD.HORAIRES,
+        OLD.JOURS_OUVERT, OLD.IMAGE_URL, OLD.EMAIL, OLD.TELEPHONE, OLD.ISPMR, OLD.ZONE,
+        OLD.PAIEMENT, OLD.ACCES
+    ) IS DISTINCT FROM (
+        NEW.IDREG, NEW.IDTPR, NEW.NOM, NEW.ADRESSE, NEW.LATITUDE, NEW.LONGITUDE, NEW.HORAIRES,
+        NEW.JOURS_OUVERT, NEW.IMAGE_URL, NEW.EMAIL, NEW.TELEPHONE, NEW.ISPMR, NEW.ZONE,
+        NEW.PAIEMENT, NEW.ACCES
+    ) THEN
+        INSERT INTO EVENEMENT (TYPE, RID) VALUES ('restaurant.updated', NEW.RID);
+    END IF;
+
+    RETURN NULL;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE OR REPLACE TRIGGER evenementOnRestaurant
+AFTER INSERT OR UPDATE ON RESTAURANT
+FOR EACH ROW
+EXECUTE FUNCTION evenementOnRestaurant();
 
 
 -- Vue pour les statistiques
