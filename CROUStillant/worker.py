@@ -144,16 +144,17 @@ class Worker:
 
         async with self.pool.acquire() as connection:
             connection: Connection
-            for region in regions:
-                await connection.execute(
-                    """
-                        INSERT INTO region (IDREG, LIBELLE) 
-                        VALUES ($1, $2) 
-                        ON CONFLICT DO NOTHING
-                    """,
-                    region.id,
-                    region.name,
-                )
+
+            await connection.execute(
+                """
+                    INSERT INTO region (IDREG, LIBELLE)
+                    SELECT U.IDREG, U.LIBELLE
+                    FROM unnest($1::int[], $2::text[]) AS U(IDREG, LIBELLE)
+                    ON CONFLICT DO NOTHING
+                """,
+                [region.id for region in regions],
+                [region.name for region in regions],
+            )
 
         self.logger.info("Régions enregistrées !")
 
@@ -215,6 +216,27 @@ class Worker:
         async with self.pool.acquire() as connection:
             connection: Connection
 
+            # Données de référence chargées une seule fois, plutôt qu'une requête par restaurant
+            types: dict[str, int] = {}
+            for row in await connection.fetch(
+                "SELECT IDTPR, LIBELLE FROM TYPE_RESTAURANT WHERE LIBELLE IS NOT NULL ORDER BY IDTPR"
+            ):
+                types.setdefault(row["libelle"], row["idtpr"])
+
+            images: dict[str, datetime | None] = {
+                row["image_url"]: row["derniere_modification"]
+                for row in await connection.fetch(
+                    "SELECT IMAGE_URL, DERNIERE_MODIFICATION FROM RESTAURANT_IMAGE"
+                )
+            }
+
+            feedOwners: dict[int, int] = {
+                row["feed_id"]: row["rid"]
+                for row in await connection.fetch(
+                    "SELECT RID, FEED_ID FROM RESTAURANT WHERE FEED_ID IS NOT NULL"
+                )
+            }
+
             for region in regions:
                 self.logger.info(
                     f"Chargement des restaurants pour la région {region.name}..."
@@ -226,132 +248,187 @@ class Worker:
                     f"{len(restaurants)} restaurants chargés pour la région {region.name} !"
                 )
 
-                for restaurant in restaurants:
-                    restaurant: RU
+                # Restaurants traités et empreintes de leurs menus : enregistrés en une fois par région
+                processed: list[int] = []
+                menusHashes: dict[int, str] = {}
 
-                    # Vérifie si le restaurant était actif lors de la dernière mise à jour. Limite le nombre de requêtes inutiles.
-                    if restaurant.id not in self.restaurants:
-                        self.logger.debug(
-                            f"Le restaurant {restaurant.title} n'est pas actif !"
-                        )
-                        continue
+                try:
+                    for restaurant in restaurants:
+                        restaurant: RU
 
-                    tpRestaurantID = await connection.fetchval(
-                        "SELECT IDTPR FROM TYPE_RESTAURANT WHERE LIBELLE = $1",
-                        restaurant.type,
-                    )
+                        # Vérifie si le restaurant était actif lors de la dernière mise à jour. Limite le nombre de requêtes inutiles.
+                        if restaurant.id not in self.restaurants:
+                            self.logger.debug(
+                                f"Le restaurant {restaurant.title} n'est pas actif !"
+                            )
+                            continue
 
-                    if not tpRestaurantID:
-                        await connection.execute(
-                            """
-                                INSERT INTO type_restaurant (LIBELLE) 
-                                VALUES ($1) 
-                                ON CONFLICT DO NOTHING
-                            """,
-                            restaurant.type,
-                        )
+                        tpRestaurantID = types.get(restaurant.type)
 
-                        tpRestaurantID = await connection.fetchval(
-                            "SELECT IDTPR FROM TYPE_RESTAURANT WHERE LIBELLE = $1",
-                            restaurant.type,
-                        )
+                        if tpRestaurantID is None and restaurant.type is not None:
+                            tpRestaurantID = await connection.fetchval(
+                                """
+                                    INSERT INTO type_restaurant (LIBELLE)
+                                    VALUES ($1)
+                                    RETURNING IDTPR
+                                """,
+                                restaurant.type,
+                            )
+                            types[restaurant.type] = tpRestaurantID
 
-                    async with connection.transaction():
-                        if restaurant.feedId is not None:
-                            # Si l'API a renuméroté le restaurant, libère l'ID du flux de l'ancien RID
-                            await connection.execute(
-                                "UPDATE RESTAURANT SET FEED_ID = NULL WHERE FEED_ID = $1 AND RID <> $2",
-                                restaurant.feedId,
-                                restaurant.id,
+                        if (
+                            restaurant.feedId is not None
+                            and feedOwners.get(restaurant.feedId, restaurant.id) != restaurant.id
+                        ):
+                            async with connection.transaction():
+                                # L'API a renuméroté le restaurant : libère l'ID du flux de l'ancien RID
+                                await connection.execute(
+                                    "UPDATE RESTAURANT SET FEED_ID = NULL WHERE FEED_ID = $1 AND RID <> $2",
+                                    restaurant.feedId,
+                                    restaurant.id,
+                                )
+
+                                await self.saveRestaurant(
+                                    connection, region.id, restaurant, tpRestaurantID
+                                )
+                        else:
+                            await self.saveRestaurant(
+                                connection, region.id, restaurant, tpRestaurantID
                             )
 
-                        await connection.execute(
-                            """
-                                INSERT INTO restaurant (RID, IDREG, IDTPR, NOM, ADRESSE, LATITUDE, LONGITUDE, HORAIRES, JOURS_OUVERT, IMAGE_URL, EMAIL, TELEPHONE, ISPMR, ZONE, PAIEMENT, ACCES, OPENED, AJOUT, FEED_ID)
-                                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
-                                ON CONFLICT (RID) DO UPDATE SET
-                                    IDTPR = $3,
-                                    NOM = $4,
-                                    ADRESSE = $5,
-                                    LATITUDE = $6,
-                                    LONGITUDE = $7,
-                                    HORAIRES = $8,
-                                    JOURS_OUVERT = $9,
-                                    IMAGE_URL = $10,
-                                    EMAIL = $11,
-                                    TELEPHONE = $12,
-                                    ISPMR = $13,
-                                    ZONE = $14,
-                                    PAIEMENT = $15,
-                                    ACCES = $16,
-                                    OPENED = $17,
-                                    MIS_A_JOUR = $18,
-                                    FEED_ID = $19
-                            """,
-                            restaurant.id,
-                            region.id,
-                            tpRestaurantID,
-                            restaurant.title,
-                            restaurant.contact.address,
-                            restaurant.lat,
-                            restaurant.lon,
-                            dumps(restaurant.infos.horaires)
-                            if restaurant.infos.horaires
-                            else None,
-                            restaurant.opening,
-                            restaurant.image_url,
-                            restaurant.contact.email,
-                            restaurant.contact.phone,
-                            restaurant.infos.pmr,
-                            restaurant.zone,
-                            dumps(restaurant.infos.paiements)
-                            if restaurant.infos.paiements
-                            else None,
-                            dumps(restaurant.infos.acces)
-                            if restaurant.infos.acces
-                            else None,
-                            restaurant.open,
-                            datetime.now(),
-                            restaurant.feedId,
-                        )
+                        if restaurant.feedId is not None:
+                            feedOwners[restaurant.feedId] = restaurant.id
 
-                    if restaurant.image_url:
-                        lastUpdate = await connection.fetchval(
-                            "SELECT DERNIERE_MODIFICATION FROM RESTAURANT_IMAGE WHERE IMAGE_URL = $1",
-                            restaurant.image_url,
-                        )
+                        if restaurant.image_url:
+                            lastUpdate = images.get(restaurant.image_url)
 
-                        if not lastUpdate or ((datetime.now() - lastUpdate).days >= 7):
-                            await self.loadImage(restaurant.image_url)
+                            if (
+                                not lastUpdate or ((datetime.now() - lastUpdate).days >= 7)
+                            ) and await self.loadImage(restaurant.image_url):
+                                images[restaurant.image_url] = datetime.now()
 
-                    if restaurant.id in self.restaurants:
-                        self.restaurants.remove(restaurant.id)
+                        if restaurant.id in self.restaurants:
+                            self.restaurants.remove(restaurant.id)
 
-                    if self.taskId:
-                        await connection.execute(
-                            """
-                                INSERT INTO TACHE_LOG (RID, IDTACHE)
-                                VALUES ($1, $2)
-                            """,
-                            restaurant.id,
-                            self.taskId,
-                        )
+                        processed.append(restaurant.id)
 
-                    # if restaurant.open:
-                    #     await self.loadMenus(region, restaurant)
-                    # else:
-                    #     self.logger.debug(f"Le restaurant {restaurant.title} est fermé ! Aucun menu ne sera chargé.")
+                        # if restaurant.open:
+                        #     await self.loadMenus(region, restaurant)
+                        # else:
+                        #     self.logger.debug(f"Le restaurant {restaurant.title} est fermé ! Aucun menu ne sera chargé.")
 
-                    # Le restaurant peut être fermé aujourd'hui mais les menus peuvent être disponibles pour les jours suivants
-                    menus, _ = await self.loadMenus(region.id, restaurant.id, restaurant.title)
+                        # Le restaurant peut être fermé aujourd'hui mais les menus peuvent être disponibles pour les jours suivants
+                        menus, _ = await self.loadMenus(region.id, restaurant.id, restaurant.title)
 
-                    # Enregistre l'empreinte des menus : la synchronisation via les flux
-                    # ne rechargera ce restaurant que si ses menus changent dans le flux
-                    await connection.execute(
-                        "UPDATE RESTAURANT SET FEED_MENUS_HASH = $1 WHERE RID = $2",
-                        self.computeMenusHash(menus),
-                        restaurant.id,
-                    )
+                        # Empreinte des menus : la synchronisation via les flux
+                        # ne rechargera ce restaurant que si ses menus changent dans le flux
+                        menusHashes[restaurant.id] = self.computeMenusHash(menus)
+                finally:
+                    # Y compris en cas d'erreur, pour garder la trace des restaurants déjà traités
+                    await self.saveRegionProgress(connection, processed, menusHashes)
+
+    async def saveRestaurant(
+        self, connection: Connection, regionId: int, restaurant: RU, tpRestaurantID: int | None
+    ) -> None:
+        """
+        Enregistre (ou met à jour) un restaurant dans la base de données.
+
+        :param connection: La connexion à la base de données
+        :type connection: Connection
+        :param regionId: L'ID de la région
+        :type regionId: int
+        :param restaurant: Le restaurant
+        :type restaurant: RU
+        :param tpRestaurantID: L'ID du type de restaurant
+        :type tpRestaurantID: int | None
+        """
+        await connection.execute(
+            """
+                INSERT INTO restaurant (RID, IDREG, IDTPR, NOM, ADRESSE, LATITUDE, LONGITUDE, HORAIRES, JOURS_OUVERT, IMAGE_URL, EMAIL, TELEPHONE, ISPMR, ZONE, PAIEMENT, ACCES, OPENED, AJOUT, FEED_ID)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
+                ON CONFLICT (RID) DO UPDATE SET
+                    IDTPR = $3,
+                    NOM = $4,
+                    ADRESSE = $5,
+                    LATITUDE = $6,
+                    LONGITUDE = $7,
+                    HORAIRES = $8,
+                    JOURS_OUVERT = $9,
+                    IMAGE_URL = $10,
+                    EMAIL = $11,
+                    TELEPHONE = $12,
+                    ISPMR = $13,
+                    ZONE = $14,
+                    PAIEMENT = $15,
+                    ACCES = $16,
+                    OPENED = $17,
+                    MIS_A_JOUR = $18,
+                    FEED_ID = $19
+            """,
+            restaurant.id,
+            regionId,
+            tpRestaurantID,
+            restaurant.title,
+            restaurant.contact.address,
+            restaurant.lat,
+            restaurant.lon,
+            dumps(restaurant.infos.horaires)
+            if restaurant.infos.horaires
+            else None,
+            restaurant.opening,
+            restaurant.image_url,
+            restaurant.contact.email,
+            restaurant.contact.phone,
+            restaurant.infos.pmr,
+            restaurant.zone,
+            dumps(restaurant.infos.paiements)
+            if restaurant.infos.paiements
+            else None,
+            dumps(restaurant.infos.acces)
+            if restaurant.infos.acces
+            else None,
+            restaurant.open,
+            datetime.now(),
+            restaurant.feedId,
+        )
+
+    async def saveRegionProgress(
+        self, connection: Connection, processed: list[int], menusHashes: dict[int, str]
+    ) -> None:
+        """
+        Enregistre, en une requête chacun, les restaurants traités par la tâche et
+        l'empreinte de leurs menus.
+
+        :param connection: La connexion à la base de données
+        :type connection: Connection
+        :param processed: Les RIDs des restaurants traités
+        :type processed: list[int]
+        :param menusHashes: L'empreinte des menus de chaque restaurant (RID -> hash)
+        :type menusHashes: dict[int, str]
+        """
+        if processed and self.taskId:
+            await connection.execute(
+                """
+                    INSERT INTO TACHE_LOG (RID, IDTACHE)
+                    SELECT U.RID, $2::int
+                    FROM unnest($1::int[]) AS U(RID)
+                    ON CONFLICT DO NOTHING
+                """,
+                processed,
+                self.taskId,
+            )
+
+        if menusHashes:
+            await connection.execute(
+                """
+                    UPDATE RESTAURANT R
+                    SET FEED_MENUS_HASH = U.MENUS_HASH
+                    FROM unnest($1::int[], $2::text[]) AS U(RID, MENUS_HASH)
+                    WHERE R.RID = U.RID
+                """,
+                list(menusHashes.keys()),
+                list(menusHashes.values()),
+            )
 
     def _menuData(self, menu: Menu) -> dict:
         """
@@ -484,170 +561,238 @@ class Worker:
 
         self.logger.info(f"{len(menus)} menus chargés pour le restaurant {title} !")
 
-        written = 0
+        if len(menus) == 0:
+            return menus, 0
+
+        # Calculer le hash de chaque menu
+        hashes = {menu.id: self.compute_menu_hash(menu) for menu in menus}
 
         async with self.pool.acquire() as connection:
             connection: Connection
 
             async with connection.transaction():
-                for menu in menus:
-                    # Calculer le hash du menu
-                    menu_hash = self.compute_menu_hash(menu)
+                # Récupérer le hash des menus déjà enregistrés
+                rows = await connection.fetch(
+                    "SELECT MID, MENU_HASH FROM MENU WHERE MID = ANY($1::int[])",
+                    list(hashes.keys()),
+                )
+                existing = {row["mid"]: row["menu_hash"] for row in rows}
 
-                    # Vérifier si le menu existe déjà et si son hash a changé
-                    existing_hash = await connection.fetchval(
-                        "SELECT MENU_HASH FROM MENU WHERE MID = $1",
-                        menu.id,
-                    )
+                # Si le hash n'a pas changé, on peut ignorer ce menu
+                unchanged = [
+                    mid for mid, menu_hash in hashes.items() if existing.get(mid) == menu_hash
+                ]
+                changed = {
+                    menu.id: menu for menu in menus if existing.get(menu.id) != hashes[menu.id]
+                }
 
-                    # Si le hash n'a pas changé, on peut ignorer ce menu
-                    if existing_hash == menu_hash:
-                        await connection.execute(
-                            """
+                if unchanged:
+                    await connection.execute(
+                        """
                             UPDATE MENU
                             SET LAST_CHECKED = $2
-                            WHERE MID = $1
-                            """,
-                            menu.id,
-                            datetime.now(),
-                        )
-                        self.logger.debug(f"Menu {menu.id} inchangé, skip")
-                        continue
-
-                    written += 1
-
-                    # Si le menu a changé ou n'existe pas, supprimer les anciens enregistrements liés
-                    await connection.execute(
-                        """
-                            DELETE FROM COMPOSITION 
-                            WHERE CATID IN (
-                                SELECT CATID FROM CATEGORIE WHERE RPID IN (
-                                    SELECT RPID FROM REPAS WHERE MID = $1
-                                )
-                            )
+                            WHERE MID = ANY($1::int[])
                         """,
-                        menu.id,
+                        unchanged,
+                        datetime.now(),
                     )
+                    self.logger.debug(f"{len(unchanged)} menus inchangés, skip")
 
-                    await connection.execute(
-                        """
-                            DELETE FROM CATEGORIE 
-                            WHERE RPID IN (
-                                SELECT RPID FROM REPAS WHERE MID = $1
+                if changed:
+                    await self.saveMenus(connection, rid, list(changed.values()), hashes)
+
+        return menus, len(changed)
+
+    async def saveMenus(
+        self, connection: Connection, rid: int, menus: list[Menu], hashes: dict[int, str]
+    ) -> None:
+        """
+        Enregistre des menus nouveaux ou modifiés, avec leurs repas, catégories et plats.
+
+        Chaque table est écrite en une seule requête pour l'ensemble des menus, quel que
+        soit le nombre de repas, de catégories et de plats.
+
+        :param connection: La connexion à la base de données (dans une transaction)
+        :type connection: Connection
+        :param rid: L'ID du restaurant universitaire
+        :type rid: int
+        :param menus: Les menus à enregistrer
+        :type menus: list[Menu]
+        :param hashes: Le hash de chaque menu (MID -> hash)
+        :type hashes: dict[int, str]
+        """
+        mids = [menu.id for menu in menus]
+
+        # Supprimer les anciens enregistrements liés
+        await connection.execute(
+            """
+                DELETE FROM COMPOSITION
+                WHERE CATID IN (
+                    SELECT CATID FROM CATEGORIE WHERE RPID IN (
+                        SELECT RPID FROM REPAS WHERE MID = ANY($1::int[])
+                    )
+                )
+            """,
+            mids,
+        )
+
+        await connection.execute(
+            """
+                DELETE FROM CATEGORIE
+                WHERE RPID IN (
+                    SELECT RPID FROM REPAS WHERE MID = ANY($1::int[])
+                )
+            """,
+            mids,
+        )
+
+        await connection.execute(
+            "DELETE FROM REPAS WHERE MID = ANY($1::int[])",
+            mids,
+        )
+
+        # Insérer ou mettre à jour les menus avec le nouveau hash
+        await connection.execute(
+            """
+                INSERT INTO MENU (MID, RID, DATE, MENU_HASH)
+                SELECT U.MID, $2::int, U.DATE, U.MENU_HASH
+                FROM unnest($1::int[], $3::date[], $4::text[]) AS U(MID, DATE, MENU_HASH)
+                ON CONFLICT (MID) DO UPDATE
+                SET MENU_HASH = EXCLUDED.MENU_HASH
+            """,
+            mids,
+            rid,
+            [menu.date for menu in menus],
+            [hashes[mid] for mid in mids],
+        )
+
+        # Insérer les repas : un par (menu, type de repas)
+        repas = list(
+            dict.fromkeys((menu.id, meal.name) for menu in menus for meal in menu.meals)
+        )
+
+        if not repas:
+            return
+
+        rows = await connection.fetch(
+            """
+                INSERT INTO REPAS (TPR, MID)
+                SELECT U.TPR, U.MID
+                FROM unnest($1::text[], $2::int[]) AS U(TPR, MID)
+                RETURNING RPID, TPR, MID
+            """,
+            [tpr for _, tpr in repas],
+            [mid for mid, _ in repas],
+        )
+        rpids = {(row["mid"], row["tpr"]): row["rpid"] for row in rows}
+
+        # Insérer les catégories : une par (repas, nom), à la position de sa première occurrence
+        categories: dict[tuple[int, str], int] = {}
+
+        for menu in menus:
+            for meal in menu.meals:
+                rpid = rpids[(menu.id, meal.name)]
+
+                for ordreCategory, category in enumerate(meal.categories):
+                    categories.setdefault((rpid, category.name), ordreCategory)
+
+        if not categories:
+            return
+
+        rows = await connection.fetch(
+            """
+                INSERT INTO CATEGORIE (TPCAT, ORDRE, RPID)
+                SELECT U.TPCAT, U.ORDRE, U.RPID
+                FROM unnest($1::text[], $2::int[], $3::int[]) AS U(TPCAT, ORDRE, RPID)
+                RETURNING CATID, TPCAT, RPID
+            """,
+            [tpcat for _, tpcat in categories],
+            list(categories.values()),
+            [rpid for rpid, _ in categories],
+        )
+        catids = {(row["rpid"], row["tpcat"]): row["catid"] for row in rows}
+
+        # Compositions : une par (catégorie, plat), à la position de sa première occurrence
+        compositions: dict[tuple[int, str], int] = {}
+
+        for menu in menus:
+            for meal in menu.meals:
+                rpid = rpids[(menu.id, meal.name)]
+
+                for category in meal.categories:
+                    catid = catids[(rpid, category.name)]
+
+                    for ordreDish, dish in enumerate(category.dishes):
+                        # Vérifie la longueur du nom du plat pour éviter les erreurs de dépassement de capacité de la base de données
+                        if len(dish.name) >= 499:
+                            self.logger.critical(
+                                f"Le plat '{dish.name}' est trop long ({len(dish.name)} caractères). Debug: [RID: {rid}, RPID: {rpid}, CATID: {catid}]"
                             )
-                        """,
-                        menu.id,
-                    )
+                            # Ignore ce plat
+                            continue
 
-                    await connection.execute(
-                        "DELETE FROM REPAS WHERE MID = $1",
-                        menu.id,
-                    )
-
-                    # Insérer ou mettre à jour le menu avec le nouveau hash
-                    await connection.execute(
-                        """
-                            INSERT INTO MENU (MID, RID, DATE, MENU_HASH)
-                            VALUES ($1, $2, $3, $4) 
-                            ON CONFLICT (MID) DO UPDATE 
-                            SET MENU_HASH = EXCLUDED.MENU_HASH
-                        """,
-                        menu.id,
-                        rid,
-                        menu.date,
-                        menu_hash,
-                    )
-
-                    # Insérer les repas, catégories et compositions
-                    for meal in menu.meals:
-                        await connection.execute(
-                            """
-                                INSERT INTO REPAS (TPR, MID)
-                                VALUES ($1, $2) 
-                                ON CONFLICT DO NOTHING
-                            """,
-                            meal.name,
-                            menu.id,
-                        )
-
-                        rpid = await connection.fetchval(
-                            "SELECT RPID FROM REPAS WHERE TPR = $1 AND MID = $2",
-                            meal.name,
-                            menu.id,
-                        )
-
-                        for ordreCategory, category in enumerate(meal.categories):
-                            await connection.execute(
-                                """
-                                    INSERT INTO CATEGORIE (TPCAT, ORDRE, RPID)
-                                    VALUES ($1, $2, $3) 
-                                    ON CONFLICT DO NOTHING
-                                """,
-                                category.name,
-                                ordreCategory,
-                                rpid,
+                        if not dish.name.strip():
+                            self.logger.critical(
+                                f"Le plat a un nom vide. Debug: [RID: {rid}, RPID: {rpid}, CATID: {catid}]"
                             )
+                            # Ignore ce plat
+                            continue
 
-                            catid = await connection.fetchval(
-                                "SELECT CATID FROM CATEGORIE WHERE TPCAT = $1 AND RPID = $2",
-                                category.name,
-                                rpid,
-                            )
+                        compositions.setdefault((catid, dish.name), ordreDish)
 
-                            for ordreDish, dish in enumerate(category.dishes):
-                                # Vérifie la longueur du nom du plat pour éviter les erreurs de dépassement de capacité de la base de données
-                                if len(dish.name) >= 499:
-                                    self.logger.critical(
-                                        f"Le plat '{dish.name}' est trop long ({len(dish.name)} caractères). Debug: [RID: {rid}, RPID: {rpid}, CATID: {catid}]"
-                                    )
-                                    # Ignore ce plat
-                                    continue
+        if not compositions:
+            return
 
-                                if not dish.name.strip():
-                                    self.logger.critical(
-                                        f"Le plat a un nom vide. Debug: [RID: {rid}, RPID: {rpid}, CATID: {catid}]"
-                                    )
-                                    # Ignore ce plat
-                                    continue
+        # Récupérer l'ID des plats existants, puis insérer ceux qui manquent
+        # Note: PLAT n'a pas de contrainte d'unicité sur LIBELLE, donc on vérifie d'abord
+        libelles = list(dict.fromkeys(libelle for _, libelle in compositions))
 
-                                # Essayer d'insérer le plat, ou récupérer l'ID s'il existe déjà
-                                # Note: PLAT n'a pas de contrainte d'unicité sur LIBELLE, donc on vérifie d'abord
-                                platid = await connection.fetchval(
-                                    "SELECT PLATID FROM PLAT WHERE LIBELLE = $1 LIMIT 1",
-                                    dish.name,
-                                )
+        rows = await connection.fetch(
+            """
+                SELECT LIBELLE, MIN(PLATID) AS PLATID
+                FROM PLAT
+                WHERE LIBELLE = ANY($1::text[])
+                GROUP BY LIBELLE
+            """,
+            libelles,
+        )
+        platids = {row["libelle"]: row["platid"] for row in rows}
 
-                                if platid is None:
-                                    # Utiliser RETURNING pour obtenir l'ID atomiquement
-                                    platid = await connection.fetchval(
-                                        """
-                                            INSERT INTO PLAT (LIBELLE)
-                                            VALUES ($1)
-                                            RETURNING PLATID
-                                        """,
-                                        dish.name,
-                                    )
+        missing = [libelle for libelle in libelles if libelle not in platids]
 
-                                await connection.execute(
-                                    """
-                                        INSERT INTO COMPOSITION (CATID, ORDRE, PLATID)
-                                        VALUES ($1, $2, $3) 
-                                        ON CONFLICT DO NOTHING
-                                    """,
-                                    catid,
-                                    ordreDish,
-                                    platid,
-                                )
+        if missing:
+            rows = await connection.fetch(
+                """
+                    INSERT INTO PLAT (LIBELLE)
+                    SELECT U.LIBELLE
+                    FROM unnest($1::text[]) AS U(LIBELLE)
+                    RETURNING PLATID, LIBELLE
+                """,
+                missing,
+            )
+            platids.update({row["libelle"]: row["platid"] for row in rows})
 
-        return menus, written
+        await connection.execute(
+            """
+                INSERT INTO COMPOSITION (CATID, ORDRE, PLATID)
+                SELECT U.CATID, U.ORDRE, U.PLATID
+                FROM unnest($1::int[], $2::int[], $3::int[]) AS U(CATID, ORDRE, PLATID)
+                ON CONFLICT DO NOTHING
+            """,
+            [catid for catid, _ in compositions],
+            list(compositions.values()),
+            [platids[libelle] for _, libelle in compositions],
+        )
 
-    async def loadImage(self, image_url: str) -> None:
+    async def loadImage(self, image_url: str) -> bool:
         """
         Charge une image et l'enregistre dans la base de données.
         Cette méthode est utilisée pour éviter de charger plusieurs fois la même image et de limiter les requêtes inutiles à l'API du CROUS.
 
         :param image_url: L'URL de l'image
         :type image_url: str
+        :return: ``True`` si l'image a été enregistrée, ``False`` si elle n'a pas pu être chargée
+        :rtype: bool
         """
         try:
             self.logger.debug(f"GET {image_url}")
@@ -684,7 +829,7 @@ class Worker:
                         datetime.now(),
                     )
 
-                return
+                return True
 
             if not image.mode == "RGB":
                 image = image.convert("RGB")
@@ -715,13 +860,17 @@ class Worker:
 
             self.logger.info(f"Image {image_url} enregistrée !")
 
+            return True
+
+        return False
+
     async def updateRestaurantsStatus(self) -> None:
         """
         Met à jour le statut des restaurants.
         """
         self.logger.info("Mise à jour du statut des restaurants...")
 
-        for restaurant in self.restaurants:
+        if self.restaurants:
             async with self.pool.acquire() as connection:
                 connection: Connection
 
@@ -729,9 +878,9 @@ class Worker:
                     """
                         UPDATE RESTAURANT
                         SET ACTIF = FALSE
-                        WHERE RID = $1
+                        WHERE RID = ANY($1::int[])
                     """,
-                    restaurant,
+                    self.restaurants,
                 )
 
         self.logger.info("Statut des restaurants mis à jour !")
