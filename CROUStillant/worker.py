@@ -3,6 +3,7 @@ import asyncio
 
 from CrousPy import Crous, Region, RU, Menu, Menus
 from CROUStillant.logger import Logger
+from CROUStillant.dishes import DishAnalyser
 from asyncpg import Pool, Connection
 from json import dumps
 from datetime import datetime
@@ -30,6 +31,7 @@ class Worker:
         self.pool = pool
         self.client = client
         self.restaurants = restaurants
+        self.dishes = DishAnalyser(logger)
 
         self.taskId = None
         self.requests = 0
@@ -594,6 +596,8 @@ class Worker:
                                 rpid,
                             )
 
+                            await self.dishes.registerCategory(connection, category.name)
+
                             for ordreDish, dish in enumerate(category.dishes):
                                 # Vérifie la longueur du nom du plat pour éviter les erreurs de dépassement de capacité de la base de données
                                 if len(dish.name) >= 499:
@@ -627,6 +631,9 @@ class Worker:
                                         """,
                                         dish.name,
                                     )
+
+                                    # Nouveau libellé : nettoyage, plat canonique et type
+                                    await self.dishes.analyse(connection, platid, dish.name, category.name)
 
                                 await connection.execute(
                                     """
