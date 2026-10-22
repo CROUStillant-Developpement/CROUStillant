@@ -221,40 +221,76 @@ END;
 $$;
 
 
--- Traitement des plats (résultat du classifier : classification + libellé nettoyé)
--- CLASSIFICATION :  1 = plat réel, 0 = pas un plat (métadonnée, prix, horaire...)
--- LIBELLE_NET    :  libellé nettoyé (parenthèses supprimées), NULL si CLASSIFICATION = -1
-CREATE TABLE PLAT_TRAITEMENT(
-    PLATID INT,
-    LIBELLE_NET VARCHAR(500),
-    CLASSIFICATION SMALLINT NOT NULL,
-    CONFIDENCE FLOAT NOT NULL,
-    TRAITE_LE TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    CONSTRAINT PK_PLAT_TRAITEMENT PRIMARY KEY (PLATID),
-    CONSTRAINT FK_PLAT_TRAITEMENT_PLAT FOREIGN KEY (PLATID) REFERENCES PLAT(PLATID),
-    CONSTRAINT CK_PLAT_TRAITEMENT_LABEL CHECK (CLASSIFICATION IN (0, 1)),
-    CONSTRAINT CK_PLAT_TRAITEMENT_CONFIDENCE CHECK (CONFIDENCE BETWEEN 0 AND 1),
-    TYPE_PLAT VARCHAR(20),
-    CONSTRAINT CK_PLAT_TRAITEMENT_LIBELLE_NET CHECK (
-        (CLASSIFICATION = 1 AND LIBELLE_NET IS NOT NULL) OR
-        (CLASSIFICATION = 0 AND LIBELLE_NET IS NULL)
-    ),
-    CONSTRAINT CK_PLAT_TRAITEMENT_TYPE_PLAT CHECK (
-        TYPE_PLAT IS NULL OR (
-            CLASSIFICATION = 1 AND TYPE_PLAT IN ('ENTREE', 'PLAT', 'DESSERT', 'BOISSON', 'FROMAGE', 'AUTRE')
-        )
-    )
-) PARTITION BY HASH(PLATID);
+-- Plat canonique (CROUStillantClassifier) : un plat réel, toutes écritures confondues
+-- ("Poulet à la basquaise", "POULET BASQUAISE (maison)" → même plat).
+-- CLE       : clé déterministe calculée par croustillant_classifier
+-- TYPE_PLAT : type par défaut ; le type d'une occurrence est donné par V_COMPOSITION_TYPEE
+-- Un plat canonique existant n'est jamais modifié par l'ingestion : un type revu à la main fait foi.
+CREATE TABLE PLAT_CANONIQUE(
+    IDPC SERIAL PRIMARY KEY,
+    CLE VARCHAR(500) NOT NULL,
+    LIBELLE VARCHAR(500) NOT NULL,
+    TYPE_PLAT VARCHAR(20) NOT NULL,
+    VEGETARIEN BOOLEAN NOT NULL DEFAULT FALSE,
+    CONFIANCE REAL NOT NULL,
+    SOURCE VARCHAR(20) NOT NULL,
+    A_REVOIR BOOLEAN NOT NULL DEFAULT FALSE,
+    REVUE VARCHAR(200)[],
+    CREE_LE TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    MIS_A_JOUR TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT UQ_PLAT_CANONIQUE_CLE UNIQUE (CLE),
+    CONSTRAINT CK_PLAT_CANONIQUE_TYPE CHECK (TYPE_PLAT IN
+        ('ENTREE', 'PLAT', 'ACCOMPAGNEMENT', 'DESSERT', 'FROMAGE', 'BOISSON', 'FORMULE', 'AUTRE')),
+    CONSTRAINT CK_PLAT_CANONIQUE_CONFIANCE CHECK (CONFIANCE BETWEEN 0 AND 1)
+);
 
--- Création des partitions pour la table PLAT_TRAITEMENT
-DO
-$$
-BEGIN
-    FOR i IN 0..29 LOOP
-        EXECUTE format('CREATE TABLE plat_traitement_partition_%s PARTITION OF PLAT_TRAITEMENT FOR VALUES WITH (modulus 30, remainder %s)', i, i);
-    END LOOP;
-END;
-$$;
+
+-- Analyse d'un libellé brut (une ligne par PLAT)
+-- NATURE    : DISH (plat), INFO (fermeture, horaire...), JUNK (séparateur...), ALLERGENS / PRICE (ligne orpheline)
+-- TYPE_INFO : CLOSURE, NOTICE, APP, THEME, CATEGORY (si NATURE = INFO)
+-- ALLERGENES: codes déclarés dans le libellé ("(1.3.7)"), référencent ALLERGENE.IDALLERGENE
+CREATE TABLE PLAT_ANALYSE(
+    PLATID INT PRIMARY KEY,
+    NATURE VARCHAR(10) NOT NULL,
+    TYPE_INFO VARCHAR(10),
+    LIBELLE_NET VARCHAR(500),
+    POINTS NUMERIC(4, 1),
+    POINTS_NOTE VARCHAR(100),
+    PRIX NUMERIC(6, 2)[],
+    ALLERGENES SMALLINT[],
+    ORIGINES VARCHAR(100)[],
+    LABELS VARCHAR(100)[],
+    VIANDES VARCHAR(50)[],
+    DETAILS VARCHAR(500)[],
+    VEGETARIEN BOOLEAN NOT NULL DEFAULT FALSE,
+    STATION VARCHAR(100),
+    INDICE_SECTION VARCHAR(20),
+    DRAPEAUX VARCHAR(100)[],
+    VERSION VARCHAR(20) NOT NULL,
+    TRAITE_LE TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT FK_PLAT_ANALYSE_PLAT FOREIGN KEY (PLATID) REFERENCES PLAT(PLATID),
+    CONSTRAINT CK_PLAT_ANALYSE_NATURE CHECK (NATURE IN ('DISH', 'INFO', 'JUNK', 'ALLERGENS', 'PRICE'))
+);
+
+
+-- Composants d'un libellé brut : 1..n plats canoniques ("Poisson pané, riz, ratatouille")
+-- ORDRE : 0 = composant principal
+CREATE TABLE PLAT_COMPOSANT(
+    PLATID INT NOT NULL,
+    ORDRE SMALLINT NOT NULL,
+    IDPC INT NOT NULL,
+    LIBELLE VARCHAR(500) NOT NULL,
+    CONSTRAINT PK_PLAT_COMPOSANT PRIMARY KEY (PLATID, ORDRE),
+    CONSTRAINT FK_PLAT_COMPOSANT_PLAT FOREIGN KEY (PLATID) REFERENCES PLAT(PLATID),
+    CONSTRAINT FK_PLAT_COMPOSANT_CANONIQUE FOREIGN KEY (IDPC) REFERENCES PLAT_CANONIQUE(IDPC)
+);
+
+
+-- Type porté par une catégorie de menu ("Entrées" → ENTREE) ; NULL si catégorie vague ("A la carte")
+CREATE TABLE TYPE_CATEGORIE(
+    TPCAT VARCHAR(500) PRIMARY KEY,
+    TYPE_PLAT VARCHAR(20)
+);
 
 
 -- Référentiel des allergènes (14 allergènes majeurs UE - règlement EU 1169/2011)
@@ -486,8 +522,9 @@ CREATE INDEX idx_bucket_key ON BUCKET (KEY);
 CREATE INDEX idx_requests_logs_key ON REQUESTS_LOGS (KEY);
 CREATE INDEX idx_requests_logs_created_at ON REQUESTS_LOGS (CREATED_AT);
 CREATE INDEX idx_geo_data_region ON GEO_DATA (REGION);
-CREATE INDEX idx_plat_traitement_label ON PLAT_TRAITEMENT (CLASSIFICATION);
-CREATE INDEX idx_plat_traitement_traite_le ON PLAT_TRAITEMENT (TRAITE_LE);
+CREATE INDEX idx_plat_canonique_a_revoir ON PLAT_CANONIQUE (A_REVOIR) WHERE A_REVOIR;
+CREATE INDEX idx_plat_analyse_nature ON PLAT_ANALYSE (NATURE);
+CREATE INDEX idx_plat_composant_idpc ON PLAT_COMPOSANT (IDPC);
 CREATE INDEX idx_plat_allergene_allergene ON PLAT_ALLERGENE (IDALLERGENE);
 CREATE INDEX idx_valeurs_nutritionnelles_kcal ON VALEURS_NUTRITIONNELLES (ENERGIE_KCAL);
 
@@ -782,3 +819,31 @@ LIMIT 100
 WITH DATA;
 
 CREATE UNIQUE INDEX IF NOT EXISTS v_plats_top_platid_idx ON v_plats_top (platid);
+
+
+-- Type d'une occurrence (un plat servi dans une catégorie donnée) : le type par défaut du
+-- plat canonique, sauf réinterprétation acceptée par la catégorie du jour (une pizza servie
+-- en "Entrées" est une entrée ; une purée servie en "Plats" reste un accompagnement).
+-- ⚠ Doit rester identique à OCCURRENCE_OVERRIDES (croustillant_classifier/analyzer.py).
+CREATE VIEW V_COMPOSITION_TYPEE AS
+SELECT
+    CO.CATID,
+    CO.ORDRE,
+    CO.PLATID,
+    PCO.ORDRE AS ORDRE_COMPOSANT,
+    PC.IDPC,
+    PC.LIBELLE,
+    PC.TYPE_PLAT AS TYPE_DEFAUT,
+    CASE
+        WHEN PCO.ORDRE = 0 AND (PC.TYPE_PLAT, TC.TYPE_PLAT) IN (
+            ('PLAT', 'ENTREE'), ('ENTREE', 'PLAT'),
+            ('DESSERT', 'BOISSON'),
+            ('DESSERT', 'FROMAGE'), ('FROMAGE', 'DESSERT')
+        ) THEN TC.TYPE_PLAT
+        ELSE PC.TYPE_PLAT
+    END AS TYPE_PLAT
+FROM COMPOSITION CO
+JOIN CATEGORIE CA ON CA.CATID = CO.CATID
+JOIN PLAT_COMPOSANT PCO ON PCO.PLATID = CO.PLATID
+JOIN PLAT_CANONIQUE PC ON PC.IDPC = PCO.IDPC
+LEFT JOIN TYPE_CATEGORIE TC ON TC.TPCAT = CA.TPCAT;

@@ -78,6 +78,12 @@ async def runFull(logger: Logger, pool: Pool, crous: Crous, notifier: Notifier) 
     # Mise à jour des statuts des restaurants inactifs
     await worker.updateRestaurantsStatus()
 
+    # Rattrapage des plats non analysés (erreur passée ou nouvelle version du classifieur)
+    try:
+        await worker.dishes.analysePending(pool)
+    except Exception as e:
+        logger.error(f"Erreur lors de l'analyse des plats : {e}")
+
     # Récupération des restaurants actifs dans la base de données
     restaurants = await getActiveRestaurants(pool)
 
