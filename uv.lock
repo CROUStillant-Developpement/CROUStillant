@@ -323,7 +323,7 @@ dev = [{ name = "ruff", specifier = ">=0.16.1" }]
 [[package]]
 name = "croustillant-classifier"
 version = "2.1.0"
-source = { git = "https://github.com/CROUStillant-Developpement/CROUStillantClassifier.git#e708ab1ee2debbcb67e6df7a8ee8cbad172d012b" }
+source = { git = "https://github.com/CROUStillant-Developpement/CROUStillantClassifier.git#e903908c98d762bd0a200b3cbecc26f453cadedb" }
 
 [[package]]
 name = "discord-py"
