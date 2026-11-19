@@ -278,6 +278,20 @@ class Worker:
                             )
                             types[restaurant.type] = tpRestaurantID
 
+                        if restaurant.image_url and restaurant.image_url not in images:
+                            # RESTAURANT.IMAGE_URL référence RESTAURANT_IMAGE : l'URL doit exister avant
+                            # d'enregistrer le restaurant. Sans date, l'image est chargée juste après
+                            # (et retentée à la prochaine tâche si le chargement échoue).
+                            await connection.execute(
+                                """
+                                    INSERT INTO RESTAURANT_IMAGE (IMAGE_URL)
+                                    VALUES ($1)
+                                    ON CONFLICT (IMAGE_URL) DO NOTHING
+                                """,
+                                restaurant.image_url,
+                            )
+                            images[restaurant.image_url] = None
+
                         if (
                             restaurant.feedId is not None
                             and feedOwners.get(restaurant.feedId, restaurant.id) != restaurant.id
