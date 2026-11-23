@@ -185,12 +185,17 @@ async def logTaskRestaurants(pool: Pool, taskId: int, restaurants: list[int]) ->
         )
 
 
-async def refreshViews(pool: Pool) -> None:
+async def refreshViews(pool: Pool, full: bool = True) -> None:
     """
     Rafraîchit les vues matérialisées.
 
     :param pool: Le pool de connexions
     :type pool: Pool
+    :param full: ``True`` pour rafraîchir aussi les vues lourdes (insights et top des
+        plats), ``False`` pour ne rafraîchir que ``v_stats``. Les vues lourdes portent sur
+        l'année ou l'historique complet (jusqu'à hier pour les insights) : une fois par
+        jour, dans la tâche complète, suffit.
+    :type full: bool
     """
     async with pool.acquire() as connection:
         connection: Connection
@@ -202,17 +207,25 @@ async def refreshViews(pool: Pool) -> None:
             """
         )
 
-        # Rafraîchissement de la vue matérialisée des insights restaurants
-        # (couverture, variété, richesse, plats fréquents par restaurant)
-        await connection.execute(
-            """
-                REFRESH MATERIALIZED VIEW CONCURRENTLY v_restaurant_insights_summary;
-            """
-        )
+        if not full:
+            return
 
-        # Rafraîchissement de la vue matérialisée du top 100 des plats
-        await connection.execute(
-            """
-                REFRESH MATERIALIZED VIEW CONCURRENTLY v_plats_top;
-            """
-        )
+        # SET LOCAL dans une transaction : pgbouncer est en mode transaction, un SET de
+        # session atterrirait sur une connexion serveur arbitraire
+        async with connection.transaction():
+            await connection.execute("SET LOCAL work_mem = '256MB'")
+
+            # Rafraîchissement de la vue matérialisée des insights restaurants
+            # (couverture, variété, richesse, plats fréquents par restaurant)
+            await connection.execute(
+                """
+                    REFRESH MATERIALIZED VIEW CONCURRENTLY v_restaurant_insights_summary;
+                """
+            )
+
+            # Rafraîchissement de la vue matérialisée du top 100 des plats
+            await connection.execute(
+                """
+                    REFRESH MATERIALIZED VIEW CONCURRENTLY v_plats_top;
+                """
+            )

@@ -52,7 +52,7 @@ async def runFeed(logger: Logger, pool: Pool, crous: Crous, notifier: Notifier) 
         logger.info("Aucun menu modifié, rien à faire.")
         return
 
-    await refreshViews(pool)
+    await refreshViews(pool, full=False)
 
     end = datetime.now()
     stats = await worker.getStats()

@@ -639,33 +639,36 @@ class Worker:
         """
         mids = [menu.id for menu in menus]
 
-        # Supprimer les anciens enregistrements liés
-        await connection.execute(
-            """
-                DELETE FROM COMPOSITION
-                WHERE CATID IN (
-                    SELECT CATID FROM CATEGORIE WHERE RPID IN (
-                        SELECT RPID FROM REPAS WHERE MID = ANY($1::int[])
-                    )
-                )
-            """,
-            mids,
-        )
+        # Supprimer les anciens enregistrements liés.
+        # Les IDs sont récupérés d'abord puis supprimés par clé : avec des sous-requêtes
+        # imbriquées, le plan générique (requêtes préparées, taille de ANY($1) inconnue)
+        # hachait COMPOSITION en entier (~60 Mo de fichiers temporaires par restaurant).
+        rpids = [
+            row["rpid"]
+            for row in await connection.fetch(
+                "SELECT RPID FROM REPAS WHERE MID = ANY($1::int[])", mids
+            )
+        ]
 
-        await connection.execute(
-            """
-                DELETE FROM CATEGORIE
-                WHERE RPID IN (
-                    SELECT RPID FROM REPAS WHERE MID = ANY($1::int[])
+        if rpids:
+            catids = [
+                row["catid"]
+                for row in await connection.fetch(
+                    "SELECT CATID FROM CATEGORIE WHERE RPID = ANY($1::int[])", rpids
                 )
-            """,
-            mids,
-        )
+            ]
 
-        await connection.execute(
-            "DELETE FROM REPAS WHERE MID = ANY($1::int[])",
-            mids,
-        )
+            if catids:
+                await connection.execute(
+                    "DELETE FROM COMPOSITION WHERE CATID = ANY($1::int[])", catids
+                )
+                await connection.execute(
+                    "DELETE FROM CATEGORIE WHERE CATID = ANY($1::int[])", catids
+                )
+
+            await connection.execute(
+                "DELETE FROM REPAS WHERE RPID = ANY($1::int[])", rpids
+            )
 
         # Insérer ou mettre à jour les menus avec le nouveau hash
         await connection.execute(
